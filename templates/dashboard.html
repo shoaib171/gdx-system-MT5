@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GDX-CORR · Gold/Dollar Correlation Terminal</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#12151a; --panel:#191d24; --panel2:#1f242d; --line:#2a303b;
+  --ink:#e8eaee; --dim:#8b93a1; --faint:#5a6270;
+  --gold:#e3b34f; --gold-soft:rgba(227,179,79,.14);
+  --usd:#5fb3a1; --buy:#4cc38a; --sell:#e5604c; --warn:#e0a63f;
+  --mono:'IBM Plex Mono',monospace; --sans:'Sora',sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);min-height:100vh}
+.wrap{max-width:1240px;margin:0 auto;padding:20px 18px 48px}
+
+header{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;
+  border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:18px}
+.brand{display:flex;align-items:baseline;gap:10px}
+.brand h1{font-size:19px;font-weight:700;letter-spacing:.04em}
+.brand h1 span{color:var(--gold)}
+.brand small{color:var(--faint);font-family:var(--mono);font-size:11px}
+.hstats{display:flex;gap:18px;flex-wrap:wrap;font-family:var(--mono);font-size:12px;color:var(--dim)}
+.hstats b{color:var(--ink);font-weight:500}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--faint)}
+.dot.on{background:var(--buy);box-shadow:0 0 6px var(--buy)}
+.dot.off{background:var(--sell)}
+
+.grid{display:grid;grid-template-columns:340px 1fr;gap:16px}
+@media(max-width:920px){.grid{grid-template-columns:1fr}}
+
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+.card h2{font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-bottom:12px}
+
+/* signal card */
+.sig-dir{font-family:var(--mono);font-size:34px;font-weight:600;letter-spacing:.02em}
+.sig-dir.buy{color:var(--buy)} .sig-dir.sell{color:var(--sell)} .sig-dir.neutral{color:var(--dim)}
+.sig-score{display:flex;align-items:baseline;gap:8px;margin:6px 0 14px}
+.sig-score .n{font-family:var(--mono);font-size:20px;color:var(--gold)}
+.sig-score .d{font-size:12px;color:var(--faint)}
+.scorebar{height:6px;background:var(--panel2);border-radius:3px;overflow:hidden;margin-bottom:14px}
+.scorebar i{display:block;height:100%;background:linear-gradient(90deg,var(--gold),#f0cd7e);width:0;transition:width .5s}
+.bk{font-family:var(--mono);font-size:12px}
+.bk div{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed var(--line);color:var(--dim)}
+.bk div:last-child{border:none}
+.bk .pts{color:var(--ink)} .bk .zero{color:var(--faint)}
+
+/* correlation meter — the signature element */
+.meter{margin:4px 0 10px}
+.meter-track{position:relative;height:34px;border-radius:6px;overflow:hidden;
+  background:linear-gradient(90deg, rgba(229,96,76,.25) 0%, rgba(229,96,76,.08) 20%,
+  var(--panel2) 50%, rgba(76,195,138,.08) 80%, rgba(76,195,138,.25) 100%)}
+.meter-regime{position:absolute;top:0;bottom:0;left:0;width:20%;
+  border-right:1px dashed var(--gold);background:var(--gold-soft)}
+.meter-needle{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--gold);
+  box-shadow:0 0 8px var(--gold);transition:left .6s ease}
+.meter-scale{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10px;color:var(--faint);margin-top:5px}
+.meter-read{font-family:var(--mono);font-size:26px;margin-top:8px}
+.meter-read small{font-size:11px;color:var(--faint);display:block;margin-top:2px}
+.tag{display:inline-block;font-family:var(--mono);font-size:10px;padding:2px 8px;border-radius:4px;
+  border:1px solid var(--line);color:var(--dim);margin-top:8px}
+.tag.active{border-color:var(--gold);color:var(--gold);background:var(--gold-soft)}
+
+/* prices */
+.px{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.px .box{background:var(--panel2);border-radius:8px;padding:10px 12px}
+.px .lab{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+.px .val{font-family:var(--mono);font-size:19px;margin-top:3px}
+.px .gold .val{color:var(--gold)} .px .usd .val{color:var(--usd)}
+.px .sub{font-family:var(--mono);font-size:10px;color:var(--faint);margin-top:3px}
+
+/* controls */
+.controls{display:flex;gap:10px;margin-top:14px}
+button{font-family:var(--sans);font-size:13px;font-weight:600;border:none;border-radius:8px;
+  padding:10px 14px;cursor:pointer;flex:1;transition:filter .15s}
+button:hover{filter:brightness(1.12)}
+button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+#autoBtn{background:var(--panel2);color:var(--dim);border:1px solid var(--line)}
+#autoBtn.on{background:var(--buy);color:#0c1310;border-color:transparent}
+#closeBtn{background:transparent;border:1px solid var(--sell);color:var(--sell)}
+
+/* charts */
+.chartbox{position:relative;height:300px}
+.chartbox.small{height:110px;margin-top:10px}
+
+/* tables + log */
+table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}
+th{color:var(--faint);text-align:left;font-weight:400;padding:4px 8px;border-bottom:1px solid var(--line);
+  font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+td{padding:7px 8px;border-bottom:1px solid var(--line);color:var(--dim)}
+td.pos{color:var(--buy)} td.neg{color:var(--sell)}
+.empty{color:var(--faint);font-family:var(--mono);font-size:12px;padding:10px 0}
+#log{font-family:var(--mono);font-size:11.5px;max-height:220px;overflow-y:auto;display:flex;flex-direction:column-reverse;gap:4px}
+#log .t{color:var(--faint);margin-right:8px}
+#log .warn{color:var(--warn)} #log .error{color:var(--sell)} #log .good{color:var(--buy)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.errbar{display:none;background:rgba(229,96,76,.12);border:1px solid var(--sell);color:var(--sell);
+  font-family:var(--mono);font-size:12px;border-radius:8px;padding:10px 12px;margin-bottom:14px;white-space:pre-wrap}
+@media (prefers-reduced-motion: reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <h1>GDX<span>·</span>CORR</h1>
+      <small>{{ gold_symbol }} × DXY inverse-correlation terminal</small>
+    </div>
+    <div class="hstats">
+      <span><i class="dot" id="connDot"></i><b id="connTxt">connecting…</b></span>
+      <span>session <b id="sessTxt">—</b></span>
+      <span>trades <b id="tradesTxt">0/0</b></span>
+      <span>equity <b id="equityTxt">—</b></span>
+      <span>updated <b id="updTxt">—</b></span>
+    </div>
+  </header>
+
+  <div class="errbar" id="errbar"></div>
+
+  <div class="grid">
+    <!-- LEFT column -->
+    <div class="stack">
+      <div class="card">
+        <h2>Live Signal</h2>
+        <div class="sig-dir neutral" id="sigDir">—</div>
+        <div class="sig-score"><span class="n" id="sigScore">0</span><span class="d">/ 100 &nbsp;·&nbsp; fires at {{ signal_threshold }}</span></div>
+        <div class="scorebar"><i id="scoreFill"></i></div>
+        <div class="bk" id="breakdown"></div>
+        <div class="controls">
+          <button id="autoBtn">AUTO-TRADE OFF</button>
+          <button id="closeBtn">Close all</button>
+        </div>
+        <div class="tag" id="gateTag">gate: —</div>
+      </div>
+
+      <div class="card">
+        <h2>Correlation Meter · rolling {{ '' }}window</h2>
+        <div class="meter">
+          <div class="meter-track">
+            <div class="meter-regime"></div>
+            <div class="meter-needle" id="needle" style="left:50%"></div>
+          </div>
+          <div class="meter-scale"><span>−1.0</span><span>−0.6 regime</span><span>0</span><span>+1.0</span></div>
+        </div>
+        <div class="meter-read" id="corrVal">—<small>gold vs dollar · shaded zone = tradeable inverse regime</small></div>
+        <div class="tag" id="regimeTag">regime: —</div>
+        <div class="tag" id="zTag">decoupling z: —</div>
+      </div>
+
+      <div class="card">
+        <h2>Prices</h2>
+        <div class="px">
+          <div class="box gold"><div class="lab">{{ gold_symbol }}</div><div class="val" id="goldPx">—</div><div class="sub" id="atrTxt">ATR —</div></div>
+          <div class="box usd"><div class="lab">Dollar Index</div><div class="val" id="dxyPx">—</div><div class="sub" id="dxySrc">—</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT column -->
+    <div class="stack">
+      <div class="card">
+        <h2>Gold vs DXY · overlay</h2>
+        <div class="chartbox"><canvas id="mainChart"></canvas></div>
+        <div class="chartbox small"><canvas id="corrChart"></canvas></div>
+      </div>
+
+      <div class="card">
+        <h2>Open Positions</h2>
+        <table id="posTable">
+          <thead><tr><th>Ticket</th><th>Side</th><th>Lots</th><th>Entry</th><th>SL</th><th>TP</th><th>P/L</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="empty" id="posEmpty">No open positions</div>
+      </div>
+
+      <div class="card">
+        <h2>Engine Log</h2>
+        <div id="log"><span class="empty">Waiting for engine…</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const REFRESH = {{ refresh_ms }};
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+Chart.defaults.font.family = "'IBM Plex Mono', monospace";
+Chart.defaults.font.size = 10;
+Chart.defaults.color = css('--faint');
+
+const mainChart = new Chart(document.getElementById('mainChart'), {
+  type:'line',
+  data:{labels:[],datasets:[
+    {label:'Gold',data:[],borderColor:css('--gold'),borderWidth:1.6,pointRadius:0,yAxisID:'y',tension:.25},
+    {label:'DXY',data:[],borderColor:css('--usd'),borderWidth:1.4,pointRadius:0,yAxisID:'y1',tension:.25,borderDash:[4,3]}
+  ]},
+  options:{responsive:true,maintainAspectRatio:false,animation:false,interaction:{mode:'index',intersect:false},
+    plugins:{legend:{labels:{boxWidth:10,boxHeight:2}}},
+    scales:{x:{ticks:{maxTicksLimit:8},grid:{color:css('--line')}},
+      y:{position:'left',grid:{color:css('--line')},ticks:{color:css('--gold')}},
+      y1:{position:'right',grid:{drawOnChartArea:false},ticks:{color:css('--usd')}}}}
+});
+
+const corrChart = new Chart(document.getElementById('corrChart'), {
+  type:'line',
+  data:{labels:[],datasets:[{label:'corr',data:[],borderColor:css('--gold'),borderWidth:1.2,pointRadius:0,
+    fill:{target:{value:-0.6},below:'rgba(227,179,79,.12)'},tension:.25}]},
+  options:{responsive:true,maintainAspectRatio:false,animation:false,
+    plugins:{legend:{display:false}},
+    scales:{x:{display:false},y:{min:-1,max:1,grid:{color:css('--line')},
+      ticks:{stepSize:.5}}}}
+});
+
+let autoOn = false;
+
+async function poll(){
+  try{
+    const r = await fetch('/api/state'); const s = await r.json();
+
+    // header
+    document.getElementById('connDot').className = 'dot ' + (s.connected ? 'on' : 'off');
+    document.getElementById('connTxt').textContent = s.connected ? 'MT5 connected' : 'disconnected';
+    document.getElementById('sessTxt').textContent = s.in_session ? 'LDN/NY OPEN' : 'closed';
+    document.getElementById('tradesTxt').textContent = `${s.trades_today}/${s.max_trades}`;
+    if (s.account && s.account.equity !== undefined)
+      document.getElementById('equityTxt').textContent = `${s.account.equity} ${s.account.currency||''}`;
+    document.getElementById('updTxt').textContent = s.last_update || '—';
+
+    const err = document.getElementById('errbar');
+    if (s.error){ err.style.display='block'; err.textContent = s.error; }
+    else err.style.display='none';
+
+    const snap = s.snapshot||{}, sig = s.signal||{};
+
+    // signal card
+    const dirEl = document.getElementById('sigDir');
+    const d = sig.direction || '—';
+    dirEl.textContent = d;
+    dirEl.className = 'sig-dir ' + (d.includes('BUY')&&sig.fire?'buy':d.includes('SELL')&&sig.fire?'sell':'neutral');
+    document.getElementById('sigScore').textContent = sig.score ?? 0;
+    document.getElementById('scoreFill').style.width = (sig.score||0)+'%';
+    const bk = document.getElementById('breakdown'); bk.innerHTML='';
+    for (const [k,v] of Object.entries(sig.breakdown||{})){
+      bk.insertAdjacentHTML('beforeend',
+        `<div><span>${k}</span><span class="${v>0?'pts':'zero'}">${v>0?'+':''}${v}</span></div>`);
+    }
+    const gate = s.can_trade||[true,'—'];
+    const gt = document.getElementById('gateTag');
+    gt.textContent = 'gate: ' + gate[1];
+    gt.className = 'tag' + (gate[0]?' active':'');
+
+    // correlation meter
+    if (snap.correlation !== undefined){
+      const c = snap.correlation;
+      document.getElementById('needle').style.left = ((c+1)/2*100)+'%';
+      document.getElementById('corrVal').firstChild.textContent = c.toFixed(3);
+      const rt = document.getElementById('regimeTag');
+      rt.textContent = 'regime: ' + (sig.regime_active ? 'INVERSE ACTIVE' : 'weak — stand down');
+      rt.className = 'tag' + (sig.regime_active?' active':'');
+      const zt = document.getElementById('zTag');
+      zt.textContent = 'decoupling z: ' + (snap.corr_z||0).toFixed(2);
+      zt.className = 'tag' + (Math.abs(snap.corr_z||0)>=1.5?' active':'');
+    }
+
+    // prices
+    if (snap.gold_price) document.getElementById('goldPx').textContent = snap.gold_price.toFixed(2);
+    if (snap.atr) document.getElementById('atrTxt').textContent = 'ATR ' + snap.atr.toFixed(2);
+    if (snap.dxy_value) document.getElementById('dxyPx').textContent = snap.dxy_value.toFixed(3);
+    if (snap.dxy_source) document.getElementById('dxySrc').textContent = snap.dxy_source;
+
+    // charts
+    const se = s.series||{};
+    if (se.time && se.time.length){
+      mainChart.data.labels = se.time;
+      mainChart.data.datasets[0].data = se.gold;
+      mainChart.data.datasets[1].data = se.dxy;
+      mainChart.update('none');
+      corrChart.data.labels = se.time;
+      corrChart.data.datasets[0].data = se.corr;
+      corrChart.update('none');
+    }
+
+    // positions
+    const tbody = document.querySelector('#posTable tbody'); tbody.innerHTML='';
+    (s.positions||[]).forEach(p=>{
+      tbody.insertAdjacentHTML('beforeend',
+        `<tr><td>${p.ticket}</td><td class="${p.type==='BUY'?'pos':'neg'}">${p.type}</td>
+         <td>${p.volume}</td><td>${p.open_price.toFixed(2)}</td><td>${p.sl.toFixed(2)}</td>
+         <td>${p.tp.toFixed(2)}</td><td class="${p.profit>=0?'pos':'neg'}">${p.profit}</td></tr>`);
+    });
+    document.getElementById('posEmpty').style.display = (s.positions||[]).length?'none':'block';
+
+    // log
+    const log = document.getElementById('log');
+    log.innerHTML = (s.log||[]).map(l=>
+      `<div class="${l.level}"><span class="t">${l.time}</span>${l.msg}</div>`).join('')
+      || '<span class="empty">No events yet</span>';
+
+    // auto button
+    autoOn = s.auto_trade;
+    const ab = document.getElementById('autoBtn');
+    ab.textContent = 'AUTO-TRADE ' + (autoOn?'ON':'OFF');
+    ab.className = autoOn?'on':'';
+  }catch(e){ /* server not up yet */ }
+}
+
+document.getElementById('autoBtn').onclick = async ()=>{
+  if (!autoOn && !confirm('Turn AUTO-TRADE ON? The engine will place real orders on MT5.')) return;
+  await fetch('/api/toggle_auto',{method:'POST'}); poll();
+};
+document.getElementById('closeBtn').onclick = async ()=>{
+  if (!confirm('Close all GDX-CORR positions?')) return;
+  await fetch('/api/close_all',{method:'POST'}); poll();
+};
+
+poll(); setInterval(poll, REFRESH);
+</script>
+</body>
+</html>
