@@ -1,21 +1,68 @@
-# --- Confidential (credentials: MT5 login/password, Discord webhook) ---
-config.py
-.env
-*.key
-*.pem
-
-# --- Python ---
+# ==========================
+# Python
+# ==========================
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+*.so
 *.egg-info/
-.venv/
-venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# --- Tooling / local settings ---
-.claude/
+# ==========================
+# Virtual Environment
+# ==========================
+venv/
+.venv/
+env/
+ENV/
+
+# ==========================
+# IDE
+# ==========================
 .vscode/
 .idea/
+*.swp
 
-# --- Logs & runtime output ---
-*.log
+# ==========================
+# Environment
+# ==========================
+.env
+.env.*
+*.env
+
+# ==========================
+# Configuration (Secrets)
+# ==========================
+config.py
+config.local.py
+config.dev.py
+config.prod.py
+
+# ==========================
+# Logs
+# ==========================
 logs/
+*.log
+
+# ==========================
+# Runtime Files
+# ==========================
+*.db
+*.sqlite3
+*.pid
+
+# ==========================
+# Build
+# ==========================
+build/
+dist/
+
+# ==========================
+# OS Files
+# ==========================
+.DS_Store
+Thumbs.db
+
