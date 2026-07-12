@@ -1,0 +1,21 @@
+# --- Confidential (credentials: MT5 login/password, Discord webhook) ---
+config.py
+.env
+*.key
+*.pem
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# --- Tooling / local settings ---
+.claude/
+.vscode/
+.idea/
+
+# --- Logs & runtime output ---
+*.log
+logs/
