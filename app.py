@@ -82,6 +82,8 @@ def engine_loop():
     prev_sig = None            # last signal dict (for change logging)
     pending = None             # {"dir","score","bar"} — awaiting next-candle confirmation
     confirmed_dir = None       # currently confirmed firing direction
+    fired_this_bar = False     # did the confirmed signal fire at least once this candle?
+    expiry_bar = None          # candle being watched for expiry
     last_tday = trading_day()  # for the 03:00 PKT daily rollover report
     last_logged_bar = None     # one structured "bar" event per candle
 
@@ -153,14 +155,26 @@ def engine_loop():
 
             # ---- next-candle confirmation state machine ----
             fire_dir = sig["raw_direction"] if sig["fire"] else None
+
+            # expiry is candle-based, symmetric with confirmation: a confirmed
+            # signal dies only after a FULL candle passes without a single fire —
+            # intra-bar momentum flickers (90 -> 30 for seconds) no longer kill it
+            if confirmed_dir and bar != expiry_bar:
+                if not fired_this_bar:
+                    trader._log(f"⌛ Signal {confirmed_dir} EXPIRED — did not fire for a "
+                                f"full {cfg.TIMEFRAME} candle (score now {sig['score']})",
+                                "warn", discord=True)
+                    confirmed_dir = None
+                fired_this_bar = False
+                expiry_bar = bar
+            if confirmed_dir and fire_dir == confirmed_dir:
+                fired_this_bar = True
+
             if fire_dir is None:
                 if pending:
                     trader._log(f"Pending {pending['dir']} cancelled — signal faded "
                                 f"(score {sig['score']})")
                     pending = None
-                if confirmed_dir:
-                    trader._log(f"Confirmed {confirmed_dir} signal expired (score {sig['score']})")
-                    confirmed_dir = None
             elif fire_dir == confirmed_dir:
                 pending = None
             elif pending is None or pending["dir"] != fire_dir:
@@ -171,10 +185,23 @@ def engine_loop():
                 # still firing on a NEW candle -> confirmed (the only Discord signal message)
                 confirmed_dir = fire_dir
                 pending = None
+                fired_this_bar = True
+                expiry_bar = bar
+                # suggested trade levels — makes the signal actionable manually,
+                # especially outside entry hours when the bot won't enter itself
+                px = snap["gold_ask"] if fire_dir == "BUY" else snap["gold_price"]
+                sl_dist = cfg.SL_ATR_MULT * snap["atr"]
+                tp_dist = sl_dist * cfg.TP_RR
+                sl = px - sl_dist if fire_dir == "BUY" else px + sl_dist
+                tp = px + tp_dist if fire_dir == "BUY" else px - tp_dist
+                suffix = ("" if in_entry_window()
+                          else " | ⚠️ outside entry hours — bot will NOT enter, manual levels")
                 log_event("signal_confirmed", direction=fire_dir, score=sig["score"],
-                          corr=round(snap["correlation"], 3), bar=bar)
+                          corr=round(snap["correlation"], 3), bar=bar,
+                          entry=round(px, 2), sl=round(sl, 2), tp=round(tp, 2))
                 trader._log(f"✅ SIGNAL CONFIRMED {fire_dir} — score {sig['score']}, "
-                            f"corr {snap['correlation']:+.2f}, verified on new candle",
+                            f"corr {snap['correlation']:+.2f} | entry ~{px:.2f} | "
+                            f"SL {sl:.2f} | TP {tp:.2f}{suffix}",
                             "good", discord=True)
                 # opposite-signal exit: confirmed signal against the open position
                 if cfg.EXIT_ON_OPPOSITE and sig["score"] >= cfg.OPPOSITE_EXIT_SCORE:
