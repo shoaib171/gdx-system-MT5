@@ -118,7 +118,8 @@ class Trader:
     def _log(self, msg: str, level: str = "info", discord: bool = False):
         """Local engine log always; Discord only for events explicitly marked
         (entries, SL/TP closes, daily stops) — never the per-loop noise."""
-        entry = {"time": datetime.now().strftime("%H:%M:%S"), "msg": msg, "level": level}
+        # PKT wall-clock for display — the Windows clock may be in another timezone
+        entry = {"time": dlog.now_pkt().strftime("%H:%M:%S"), "msg": msg, "level": level}
         self.log.append(entry)
         self.log = self.log[-200:]
         dlog.log_event("log", level=level, msg=msg)
@@ -164,8 +165,10 @@ class Trader:
         current = {p["ticket"] for p in self.open_positions()}
         closed = self._known_position_tickets - current
         for ticket in closed:
-            deals = mt5.history_deals_get(datetime.now() - timedelta(days=2), datetime.now(),
-                                          position=ticket) or []
+            # NOTE: position= must be the ONLY selector — combining it with a date
+            # range makes the MT5 API ignore it and return ALL account deals,
+            # which mis-reported every close as the 2-day account total.
+            deals = mt5.history_deals_get(position=ticket) or []
             pnl = sum(d.profit for d in deals if d.entry == mt5.DEAL_ENTRY_OUT)
             self.daily_pnl = round(self.daily_pnl + pnl, 2)
             dlog.log_event("close", ticket=ticket, pnl=round(pnl, 2),
