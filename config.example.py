@@ -84,8 +84,8 @@ OPPOSITE_EXIT_SCORE = 75   # opposite signal must score >= this (checked on new 
 
 # ============ ENTRY QUALITY FILTERS (see STRATEGY_FILTERS.md) ============
 ENTRY_REQUIRES_CONFIRMATION = True  # entries only on next-candle confirmed signals
-SPIKE_BAR_ATR_RATIO = 2.5   # no entry if current/last candle range > this x ATR (0 = off)
-MAX_EXTENSION_ATR = 1.5     # no entry if price further than this x ATR from EMA21 (0 = off)
+SPIKE_BAR_ATR_RATIO = 0     # no entry if current/last candle range > this x ATR (0 = off)
+MAX_EXTENSION_ATR = 0       # no entry if price further than this x ATR from EMA21 (0 = off)
 REGIME_CLOSED_BARS_ONLY = True  # regime correlation from closed candles only
 REGIME_MIN_BARS = 1         # corr <= threshold for this many consecutive closed bars
 

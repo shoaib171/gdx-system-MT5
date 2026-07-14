@@ -67,6 +67,34 @@ spikes whipsaw and the retrace hands the patient entry a discount. This
 strategy earns the 2R slice of a multi-hour regime trend, which a 15–30 min
 later entry still captures; it was never designed to catch the spike itself.
 
+## Backtest verdict (2026-07-15, `backtest.py`, 30 days, $10k, bar-close sim)
+
+| Variant | Trades | W/L | Win% | PF | Net P/L |
+|---|---|---|---|---|---|
+| Old system (no filters) | 20 | 6/14 | 30% | 0.93 | −$38 |
+| Full new (conf + spike 2.5 + ext 1.5) | 9 | 2/7 | 22% | 0.42 | −$185 |
+| Conf + spike 2.5, ext OFF | 17 | 5/12 | 29% | 0.83 | −$84 |
+| Conf + spike 2.5 + ext 3.0 | 16 | 5/11 | 31% | 0.92 | −$37 |
+| **Confirmation only** | **17** | **6/11** | **35%** | **1.11** | **+$48** |
+| Conf + spike 3.5, ext OFF | 17 | 5/12 | 29% | 0.82 | −$89 |
+
+Decision (applied to config):
+- `ENTRY_REQUIRES_CONFIRMATION = True` — the only filter that improved results
+  (win rate 30% → 35%, the only positive variant).
+- `MAX_EXTENSION_ATR = 0` (OFF) — at 1.5 it was the biggest drag (−$185): this
+  is a momentum strategy, price is *supposed* to be away from EMA at entry.
+- `SPIKE_BAR_ATR_RATIO = 0` (OFF) — with confirmation ON, entries already skip
+  the intra-bar whipsaw moment; in the backtest the spike filter then mostly
+  blocked continuation winners (every spike variant lost more than conf-only).
+- Regime stability stays ON (costless at bar-close, prevents live intra-bar flips).
+
+Caveats: one month, ~17-20 trades — weak statistical power; bar-close sim can't
+model news slippage/spread blow-outs, which is what the spike filter insures
+against. **Re-enable `SPIKE_BAR_ATR_RATIO = 2.5` if a daily report ever shows a
+confirmed entry taken during an abnormal candle that hit SL within minutes.**
+Also note: the 2026-07-14 live disaster was mostly the P/L-reporting bug
+(cooldown/streak never triggered) — that fix is independent of these filters.
+
 ## Tuning protocol
 
 1. Run at least a week. The daily reports + JSONL (`logs/`) record every
