@@ -61,6 +61,18 @@ Single-process pipeline, one module per stage, all configured from `config.py`
    (`/api/toggle_auto`); other APIs: `/api/close_all` (kill switch), `/api/resume`
    (clear halt), `/api/settings` (runtime daily limits + lot mode).
 
+## Entry quality filters
+
+`STRATEGY_FILTERS.md` documents the 2026-07-14 case study behind these — read it
+before changing any of them. All are execution gates (scoring untouched), each
+with a config switch: entries require next-candle confirmation
+(`ENTRY_REQUIRES_CONFIRMATION`), are skipped during spike candles
+(`SPIKE_BAR_ATR_RATIO` × ATR) or when price is overextended from EMA21
+(`MAX_EXTENSION_ATR`), and the regime is computed from closed bars only
+(`REGIME_CLOSED_BARS_ONLY`, `REGIME_MIN_BARS`) so a forming spike candle cannot
+flip it. Gate checks live in `Trader._quality_gates`; the snapshot carries
+`regime_ok` / `regime_corr` / `bar_range` for them.
+
 ## Operating hours & diagnostics
 
 - All times PKT (`SESSION_TZ`). The trading day rolls at `TRADING_DAY_START` (03:00),

@@ -48,14 +48,17 @@ def market_closed(now: datetime | None = None) -> bool:
 def evaluate(snap: dict) -> dict:
     w = cfg.SCORE_WEIGHTS
     corr = snap["correlation"]
+    # regime uses closed-bar correlation (STRATEGY_FILTERS.md #4);
+    # fall back to live corr for snapshots that predate the fields
+    regime_corr = snap.get("regime_corr", corr)
+    regime_active = snap.get("regime_ok", corr <= cfg.CORR_REGIME_THRESHOLD)
 
     # --- 1. Regime: inverse correlation active ---
-    regime_active = corr <= cfg.CORR_REGIME_THRESHOLD
     # graded: -0.60 -> partial, -1.0 -> full weight
     if regime_active:
-        depth = min(1.0, (abs(corr) - abs(cfg.CORR_REGIME_THRESHOLD)) /
+        depth = min(1.0, (abs(regime_corr) - abs(cfg.CORR_REGIME_THRESHOLD)) /
                     (1.0 - abs(cfg.CORR_REGIME_THRESHOLD)) + 0.5)
-        regime_pts = round(w["regime"] * min(1.0, depth), 1)
+        regime_pts = round(w["regime"] * max(0.0, min(1.0, depth)), 1)
     else:
         regime_pts = 0.0
 
@@ -98,7 +101,7 @@ def evaluate(snap: dict) -> dict:
         "regime_active": regime_active,
         "session_ok": session_ok,
         "breakdown": {
-            "Inverse regime (corr {:+.2f})".format(corr): regime_pts,
+            "Inverse regime (corr {:+.2f})".format(regime_corr): regime_pts,
             "DXY momentum": momentum_pts,
             "Gold momentum agrees": gold_pts,
             "Decoupling z {:+.1f}".format(z): decouple_pts,
