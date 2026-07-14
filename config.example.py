@@ -73,14 +73,20 @@ MAX_LOT = 0.50
 MAX_OPEN_POSITIONS = 1
 
 # ============ TRADE MANAGEMENT (see TRADE_MANAGEMENT.md) ============
-# fully market-driven: every distance derives from ATR (or swing structure)
-SL_MODE = "ATR"            # "ATR" = SL_ATR_MULT x ATR | "SWING" = swing +/- buffer
+# the bot plans like a trader: structure-based SL, structure-based targets,
+# then ATR trailing once the first target is reached
+SL_MODE = "ATR"            # "ATR" = SL_ATR_MULT x ATR | "SWING" = previous swing +/- buffer
 SL_ATR_MULT = 1.5          # ATR-mode stop distance (x ATR)
 SL_SWING_LOOKBACK = 10     # SWING mode: closed candles scanned for the swing low/high
 SL_ATR_BUFFER = 0.5        # SWING mode: x ATR beyond the swing point
 SL_MIN_ATR = 1.0           # SWING mode: SL never closer than this x ATR to entry
-TP1_RR = 1.0               # 1:1 — management level: SL -> breakeven+cushion here
-TP2_RR = 2.0               # 1:2 — actual TP on the broker order
+TP_MODE = "STRUCTURE"      # "STRUCTURE" = S/R levels (repeated touches) | "RR" = fixed R-multiples
+SR_LOOKBACK = 120          # closed bars scanned for support/resistance zones
+SR_CLUSTER_ATR = 0.3       # swing points within this x ATR merge into one zone
+SR_MIN_TOUCHES = 1         # a zone counts from this many touches (2 = stricter, blocks most entries)
+MIN_TP1_RR = 0.3           # skip entry if the nearest target pays less than this x risk
+TP1_RR = 1.0               # RR mode: first target (management level)
+TP2_RR = 2.0               # RR mode: final target (broker TP)
 BE_CUSHION_ATR = 0.3       # x ATR beyond entry once TP1 is touched
 TRAIL_ATR_MULT = 1.5       # trailing gap after TP1 (x current ATR)
 TRAIL_MIN_STEP = 0.5       # $ improvement needed before modifying SL again

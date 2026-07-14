@@ -22,6 +22,11 @@ import pandas as pd
 import MetaTrader5 as mt5
 
 import config as cfg
+import trader as _trader
+
+# bare Trader instance — only plan_trade() is used, so live and backtest
+# always plan SL/TP1/TP2 with the exact same code
+PLANNER = _trader.Trader.__new__(_trader.Trader)
 
 POINT_VALUE = 100.0          # $ per 1.0 lot per $1 move (XAUUSD, 100 oz)
 SERVER_TO_PKT = timedelta(hours=2)   # MetaQuotes server (UTC+3) -> PKT (UTC+5)
@@ -74,7 +79,28 @@ def build_dataset(bars):
     # swing levels from CLOSED bars before each candle (TRADE_MANAGEMENT.md)
     df["swing_low"] = df["low"].rolling(cfg.SL_SWING_LOOKBACK).min().shift(1)
     df["swing_high"] = df["high"].rolling(cfg.SL_SWING_LOOKBACK).max().shift(1)
+    # fractal swing points for S/R zone detection
+    df["fr_hi"] = df["high"] == df["high"].rolling(5, center=True).max()
+    df["fr_lo"] = df["low"] == df["low"].rolling(5, center=True).min()
     return df
+
+
+def structure_zones(df, i, atr):
+    """S/R zones as of bar i (fractals need 2 confirming bars -> end at i-2)."""
+    w = df.iloc[max(0, i - cfg.SR_LOOKBACK):max(0, i - 2)]
+    pts = sorted(list(w.loc[w["fr_hi"], "high"]) + list(w.loc[w["fr_lo"], "low"]))
+    if not pts:
+        return []
+    tol = cfg.SR_CLUSTER_ATR * atr if atr > 0 else 1.0
+    zones, cluster = [], [pts[0]]
+    for p in pts[1:]:
+        if p - cluster[-1] <= tol:
+            cluster.append(p)
+        else:
+            zones.append([sum(cluster) / len(cluster), len(cluster)])
+            cluster = [p]
+    zones.append([sum(cluster) / len(cluster), len(cluster)])
+    return zones
 
 
 def score_bar(df, i, pkt_close, use_regime_stability):
@@ -126,7 +152,8 @@ def run(df, sim_start, balance0, filters_on, label):
     pending = None            # entry decided at bar close, executed next bar open
     prev_fire = None          # (direction) fired at previous bar close
     trades = []
-    blocked = {"spike": 0, "overext": 0, "hours": 0, "cooldown": 0, "halt": 0, "limit": 0}
+    blocked = {"spike": 0, "overext": 0, "hours": 0, "cooldown": 0, "halt": 0,
+               "limit": 0, "no_target": 0}
     cooldown_until = None
     streak = 0
     halted = False
@@ -184,22 +211,18 @@ def run(df, sim_start, balance0, filters_on, label):
                 spread_d = row["spread"] * 0.01
                 d = 1 if pending["dir"] == "BUY" else -1
                 entry = row["open"] + (spread_d if d > 0 else 0.0)
-                # SL per SL_MODE (TRADE_MANAGEMENT.md)
-                if cfg.SL_MODE == "SWING":
-                    swing = (pending["swing_low"] - cfg.SL_ATR_BUFFER * pending["atr"]) if d > 0 \
-                        else (pending["swing_high"] + cfg.SL_ATR_BUFFER * pending["atr"])
-                    sl_dist = max(d * (entry - swing), cfg.SL_MIN_ATR * pending["atr"])
+                plan, _ = PLANNER.plan_trade(pending["dir"], pending["snap"], entry)
+                if plan is None:
+                    blocked["no_target"] += 1
                 else:
-                    sl_dist = cfg.SL_ATR_MULT * pending["atr"]
-                raw = (balance * cfg.RISK_PERCENT / 100.0) / (sl_dist * POINT_VALUE)
-                lots = max(cfg.MIN_LOT, min(cfg.MAX_LOT, np.floor(raw / 0.01) * 0.01))
-                pos = {"dir": pending["dir"], "entry": entry, "lots": round(lots, 2),
-                       "sl": entry - d * sl_dist,
-                       "tp1": entry + d * sl_dist * cfg.TP1_RR,
-                       "tp2": entry + d * sl_dist * cfg.TP2_RR,
-                       "tp1_done": False,
-                       "entry_time": t_open, "score": pending["score"],
-                       "spread_cost": spread_d * POINT_VALUE * lots}
+                    sl_dist = plan["sl_dist"]
+                    raw = (balance * cfg.RISK_PERCENT / 100.0) / (sl_dist * POINT_VALUE)
+                    lots = max(cfg.MIN_LOT, min(cfg.MAX_LOT, np.floor(raw / 0.01) * 0.01))
+                    pos = {"dir": pending["dir"], "entry": entry, "lots": round(lots, 2),
+                           "sl": plan["sl"], "tp1": plan["tp1"], "tp2": plan["tp2"],
+                           "tp1_done": False,
+                           "entry_time": t_open, "score": pending["score"],
+                           "spread_cost": spread_d * POINT_VALUE * lots}
         pending = None
 
         # --- manage open position within this bar (TRADE_MANAGEMENT.md) ---
@@ -257,8 +280,11 @@ def run(df, sim_start, balance0, filters_on, label):
                     > cfg.MAX_EXTENSION_ATR * row["atr"]:
                 blocked["overext"] += 1
             else:
-                pending = {"dir": fire, "score": sig["score"], "atr": row["atr"],
-                           "swing_low": row["swing_low"], "swing_high": row["swing_high"]}
+                pending = {"dir": fire, "score": sig["score"],
+                           "snap": {"atr": row["atr"],
+                                    "swing_low": row["swing_low"],
+                                    "swing_high": row["swing_high"],
+                                    "levels": structure_zones(df, i, row["atr"])}}
 
     if pos is not None:
         close_pos(df["gold"].iloc[-1], idx[-1], "eod")
@@ -306,9 +332,8 @@ if __name__ == "__main__":
     print(f"data: {df.index[0]} .. {df.index[-1]} (server time), {len(df)} bars, "
           f"simulating last {args.days} days, warmup ok: {warmup_ok}")
     print(f"daily limits: loss ${cfg.DAILY_LOSS_LIMIT:.0f} / target ${cfg.DAILY_PROFIT_TARGET:.0f}"
-          f" | risk {cfg.RISK_PERCENT}% | SL mode {cfg.SL_MODE}"
-          f" | TP1 {cfg.TP1_RR}R->BE+{cfg.BE_CUSHION_ATR}xATR"
-          f" | TP2 {cfg.TP2_RR}R | trail {cfg.TRAIL_ATR_MULT}xATR")
+          f" | risk {cfg.RISK_PERCENT}% | SL {cfg.SL_MODE} | TP {cfg.TP_MODE}"
+          f" | BE+{cfg.BE_CUSHION_ATR}xATR at TP1 | trail {cfg.TRAIL_ATR_MULT}xATR")
 
     run(df, sim_start, args.balance, filters_on=False,
         label="OLD SYSTEM — no confirmation, no quality filters")

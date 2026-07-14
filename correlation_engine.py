@@ -49,6 +49,34 @@ class CorrelationEngine:
         for pair in cfg.DXY_COMPONENTS:
             mt5.symbol_select(pair, True)
 
+    @staticmethod
+    def _structure_levels(gold: pd.DataFrame, atr: float) -> list:
+        """S/R zones: fractal swing highs/lows over SR_LOOKBACK closed bars,
+        clustered within SR_CLUSTER_ATR x ATR. Returns [[price, touches], ...]."""
+        window = gold.iloc[-(cfg.SR_LOOKBACK + 1):-1]   # closed bars only
+        highs = window["high"].values
+        lows = window["low"].values
+        pts = []
+        for j in range(2, len(window) - 2):
+            if highs[j] == highs[j - 2:j + 3].max():
+                pts.append(float(highs[j]))
+            if lows[j] == lows[j - 2:j + 3].min():
+                pts.append(float(lows[j]))
+        if not pts:
+            return []
+        pts.sort()
+        tol = cfg.SR_CLUSTER_ATR * atr if atr > 0 else 1.0
+        zones = []
+        cluster = [pts[0]]
+        for p in pts[1:]:
+            if p - cluster[-1] <= tol:
+                cluster.append(p)
+            else:
+                zones.append([round(sum(cluster) / len(cluster), 2), len(cluster)])
+                cluster = [p]
+        zones.append([round(sum(cluster) / len(cluster), 2), len(cluster)])
+        return zones
+
     # ---------- data ----------
     def _rates(self, symbol: str, bars: int) -> pd.DataFrame | None:
         rates = mt5.copy_rates_from_pos(symbol, TF_MAP[cfg.TIMEFRAME], 0, bars)
@@ -145,6 +173,11 @@ class CorrelationEngine:
         swing_low = float(closed_gold["low"].min())
         swing_high = float(closed_gold["high"].max())
 
+        # ---- support/resistance zones for target planning ----
+        # fractal swing points over SR_LOOKBACK closed bars, clustered into
+        # zones; a zone price visited repeatedly is a real target level
+        levels = self._structure_levels(gold, float(atr.iloc[-1]) if len(atr) else 0.0)
+
         tick = mt5.symbol_info_tick(cfg.GOLD_SYMBOL)
         snapshot = {
             "gold_price": float(tick.bid) if tick else float(last["gold"]),
@@ -157,6 +190,7 @@ class CorrelationEngine:
             "bar_range": bar_range,
             "swing_low": swing_low,
             "swing_high": swing_high,
+            "levels": levels,
             "corr_z": float(last["corr_z"]) if not np.isnan(last["corr_z"]) else 0.0,
             "dxy_ema_fast": float(last["dxy_ema_f"]),
             "dxy_ema_slow": float(last["dxy_ema_s"]),

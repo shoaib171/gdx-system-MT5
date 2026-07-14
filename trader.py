@@ -285,6 +285,39 @@ class Trader:
         lots = max(cfg.MIN_LOT, min(cfg.MAX_LOT, round(lots / step) * step))
         return round(lots, 2)
 
+    # ---------- trade planning (TRADE_MANAGEMENT.md) ----------
+    def plan_trade(self, direction: str, snap: dict, price: float):
+        """Plan SL/TP1/TP2 from market structure like a trader would.
+        Returns (plan dict, "OK") or (None, reason)."""
+        atr = snap["atr"]
+        d = 1 if direction == "BUY" else -1
+
+        # SL: behind the previous swing (structure), or pure ATR distance
+        if cfg.SL_MODE == "SWING":
+            swing = (snap["swing_low"] - cfg.SL_ATR_BUFFER * atr) if d > 0 \
+                else (snap["swing_high"] + cfg.SL_ATR_BUFFER * atr)
+            sl_dist = max(d * (price - swing), cfg.SL_MIN_ATR * atr)
+        else:
+            sl_dist = cfg.SL_ATR_MULT * atr
+        sl = price - d * sl_dist
+
+        # Targets: real S/R zones price has tested repeatedly — or R-multiples
+        if cfg.TP_MODE == "STRUCTURE":
+            zones = [p for p, touches in snap.get("levels", [])
+                     if touches >= cfg.SR_MIN_TOUCHES and d * (p - price) > 0]
+            zones.sort(key=lambda p: d * (p - price))
+            tp1 = next((p for p in zones
+                        if d * (p - price) >= cfg.MIN_TP1_RR * sl_dist), None)
+            if tp1 is None:
+                return None, ("no tested S/R zone with enough room "
+                              f"(need >= {cfg.MIN_TP1_RR}x risk)")
+            beyond = [p for p in zones if d * (p - tp1) > 0.5 * atr]
+            tp2 = beyond[0] if beyond else price + 2.0 * (tp1 - price)
+        else:
+            tp1 = price + d * sl_dist * cfg.TP1_RR
+            tp2 = price + d * sl_dist * cfg.TP2_RR
+        return {"sl": sl, "sl_dist": sl_dist, "tp1": tp1, "tp2": tp2}, "OK"
+
     # ---------- trade management (TRADE_MANAGEMENT.md) ----------
     def _modify_sl(self, ticket: int, sl: float, tp: float, retries: int = 1) -> bool:
         sym = mt5.symbol_info(cfg.GOLD_SYMBOL)
@@ -422,15 +455,13 @@ class Trader:
         else:
             price = tick.bid
             order_type = mt5.ORDER_TYPE_SELL
-        d = 1 if direction == "BUY" else -1
-        if cfg.SL_MODE == "SWING":
-            swing = (snap["swing_low"] - cfg.SL_ATR_BUFFER * atr) if d > 0 \
-                else (snap["swing_high"] + cfg.SL_ATR_BUFFER * atr)
-            sl_dist = max(d * (price - swing), cfg.SL_MIN_ATR * atr)
-        else:   # ATR mode — backtest winner (see TRADE_MANAGEMENT.md)
-            sl_dist = cfg.SL_ATR_MULT * atr
-        sl = price - d * sl_dist
-        tp = price + d * sl_dist * cfg.TP2_RR
+        plan, reason = self.plan_trade(direction, snap, price)
+        if plan is None:
+            if self._last_block != (direction, reason):
+                self._log(f"Signal {direction} (score {score}) blocked: {reason}", "warn")
+                self._last_block = (direction, reason)
+            return False
+        sl_dist, sl, tp = plan["sl_dist"], plan["sl"], plan["tp2"]
 
         lots = self._lot_size(sl_dist)
         request = {
@@ -459,8 +490,7 @@ class Trader:
 
         self.trades_today += 1
         self._known_position_tickets.add(result.order)
-        d = 1 if direction == "BUY" else -1
-        tp1 = price + d * sl_dist * cfg.TP1_RR
+        tp1 = plan["tp1"]
         self.active = {"ticket": result.order, "dir": direction, "entry": price,
                        "risk": sl_dist, "tp1": tp1, "tp2": round(tp, sym.digits),
                        "tp1_done": False}

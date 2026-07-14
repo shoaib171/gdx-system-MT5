@@ -7,8 +7,20 @@ decision. Config keys in `config.py` under TRADE MANAGEMENT.
 Every distance is planned from live market structure — swing levels and current
 ATR — nothing is a fixed dollar number.
 
+## The idea (owner's design)
+The bot plans each trade the way a trader would read the chart — no arbitrary
+numbers: SL behind real structure, TP1 at a level price has actually visited
+and reacted to before, and only once price proves the trade (reaches TP1) does
+the stop start moving with ATR.
+
 ## 1. Entry
 - Entry price: market (ask for BUY, bid for SELL) at the confirmed signal.
+- **TP1** (`TP_MODE = "STRUCTURE"`): the nearest S/R zone in the trade's
+  direction — fractal swing points over the last `SR_LOOKBACK` (120) closed
+  candles, clustered within `SR_CLUSTER_ATR` × ATR. If no zone pays at least
+  `MIN_TP1_RR` × risk, the entry is skipped ("no room to target").
+  **TP2** = the next zone beyond TP1 (fallback: 2 × TP1 distance).
+  `TP_MODE = "RR"` uses fixed multiples (`TP1_RR`/`TP2_RR`) instead.
 - **SL** (`SL_MODE`):
   - `"ATR"` (default, backtest winner): `SL_ATR_MULT` (1.5) × ATR from entry.
   - `"SWING"`: beyond the 10-candle swing low/high + `SL_ATR_BUFFER` × ATR,
@@ -23,6 +35,23 @@ ATR — nothing is a fixed dollar number.
 - **TP2** = entry + 2 × risk (`TP2_RR`, **1:2**) — the real TP on the broker order.
 - Lot: AUTO = (balance × risk%) ÷ (SL distance × $100); MANUAL = fixed lot.
 - The full lot trades as a single unit — no partial closes anywhere.
+
+## Backtest verdict (30 days, $50k, confirmed entries — same management everywhere)
+
+| SL | Targets | Trades | Win% | PF | Net |
+|---|---|---|---|---|---|
+| swing | S/R strict (touches≥2, RR≥0.8) | 3 | 0% | 0.00 | −$692 (90 entries skipped "no target") |
+| ATR 1.5× | S/R strict | 4 | 25% | 0.66 | −$251 (91 skipped) |
+| swing | RR 1:1/1:2 | 11 | 36% | 0.42 | −$821 |
+| **ATR 1.5×** | **S/R loose (touches≥1, RR≥0.3)** | **20** | **50%** | **1.21** | **+$501** ← deployed |
+| ATR 1.5× | RR 1:1/1:2 | 19 | 53% | 1.26 | +$559 (one switch away) |
+
+Two hard lessons: (1) swing stops lost in every combination — they inflate 1R
+until no target is reachable; (2) strict S/R guards skip ~90% of entries
+because this is a momentum system: price is usually breaking INTO fresh
+territory when the signal confirms, so demanding a far, multi-tested zone
+ahead of it rejects nearly everything. The loose settings keep the structure
+idea and match RR-mode performance.
 
 ## 2. When price touches TP1 (1:1)
 - Nothing is closed.
