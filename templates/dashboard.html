@@ -101,6 +101,41 @@ td.pos{color:var(--buy)} td.neg{color:var(--sell)}
 .stack{display:flex;flex-direction:column;gap:16px}
 .errbar{display:none;background:rgba(229,96,76,.12);border:1px solid var(--sell);color:var(--sell);
   font-family:var(--mono);font-size:12px;border-radius:8px;padding:10px 12px;margin-bottom:14px;white-space:pre-wrap}
+
+/* live scanner — shows which analysis phase the engine is in */
+.scanner{display:flex;align-items:center;gap:9px;background:var(--panel2);border:1px solid var(--line);
+  border-radius:8px;padding:8px 11px;margin-bottom:12px;overflow:hidden;position:relative}
+.scan-dot{width:8px;height:8px;border-radius:50%;background:var(--buy);flex:none;
+  animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.35;transform:scale(.85)}50%{opacity:1;transform:scale(1.2)}}
+.scanner .txt{font-family:var(--mono);font-size:11px;color:var(--dim);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.scanner::after{content:'';position:absolute;top:0;bottom:0;width:36%;left:-40%;
+  background:linear-gradient(90deg,transparent,rgba(227,179,79,.08),transparent);
+  animation:sweep 2.6s linear infinite}
+@keyframes sweep{to{left:110%}}
+.scanner.dead .scan-dot{background:var(--sell);animation:none}
+.scanner.dead::after{animation:none}
+
+/* halt banner */
+.haltbar{display:none;background:rgba(229,96,76,.14);border:1px solid var(--sell);border-radius:8px;
+  padding:10px 12px;margin-bottom:14px;align-items:center;gap:12px;justify-content:space-between;flex-wrap:wrap}
+.haltbar span{color:var(--sell);font-family:var(--mono);font-size:12px}
+.haltbar button{flex:0 0 auto;background:var(--buy);color:#0c1310;padding:8px 18px}
+
+/* trade settings */
+.set{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.set label{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--faint);display:block;margin-bottom:4px}
+.set input,.set select{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+  font-family:var(--mono);font-size:13px;border-radius:6px;padding:8px 10px;outline:none}
+.set input:focus,.set select:focus{border-color:var(--gold)}
+.set input:disabled{opacity:.4}
+#saveBtn{margin-top:12px;background:var(--gold);color:#171205;width:100%}
+.pnl-line{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;
+  color:var(--dim);margin-top:10px;flex-wrap:wrap;gap:6px}
+.pnl-line b.pos{color:var(--buy)} .pnl-line b.neg{color:var(--sell)}
+.stat-win .val{color:var(--buy)} .stat-loss .val{color:var(--sell)}
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
 </style>
 </head>
@@ -114,7 +149,8 @@ td.pos{color:var(--buy)} td.neg{color:var(--sell)}
     <div class="hstats">
       <span><i class="dot" id="connDot"></i><b id="connTxt">connecting…</b></span>
       <span>session <b id="sessTxt">—</b></span>
-      <span>trades <b id="tradesTxt">0/0</b></span>
+      <span>trades <b id="tradesTxt">0</b></span>
+      <span>day P/L <b id="hdrPnl">0.00</b></span>
       <span>equity <b id="equityTxt">—</b></span>
       <span>updated <b id="updTxt">—</b></span>
     </div>
@@ -122,11 +158,20 @@ td.pos{color:var(--buy)} td.neg{color:var(--sell)}
 
   <div class="errbar" id="errbar"></div>
 
+  <div class="haltbar" id="haltbar">
+    <span id="haltTxt">⛔ BOT HALTED — consecutive losses. No trades until resumed.</span>
+    <button id="resumeBtn">RESUME TRADING</button>
+  </div>
+
   <div class="grid">
     <!-- LEFT column -->
     <div class="stack">
       <div class="card">
         <h2>Live Signal</h2>
+        <div class="scanner" id="scanner">
+          <span class="scan-dot"></span>
+          <span class="txt" id="phaseTxt">starting engine…</span>
+        </div>
         <div class="sig-dir neutral" id="sigDir">—</div>
         <div class="sig-score"><span class="n" id="sigScore">0</span><span class="d">/ 100 &nbsp;·&nbsp; fires at {{ signal_threshold }}</span></div>
         <div class="scorebar"><i id="scoreFill"></i></div>
@@ -136,6 +181,7 @@ td.pos{color:var(--buy)} td.neg{color:var(--sell)}
           <button id="closeBtn">Close all</button>
         </div>
         <div class="tag" id="gateTag">gate: —</div>
+        <div class="tag" id="confirmTag" style="display:none"></div>
       </div>
 
       <div class="card">
@@ -157,6 +203,31 @@ td.pos{color:var(--buy)} td.neg{color:var(--sell)}
         <div class="px">
           <div class="box gold"><div class="lab">{{ gold_symbol }}</div><div class="val" id="goldPx">—</div><div class="sub" id="atrTxt">ATR —</div></div>
           <div class="box usd"><div class="lab">Dollar Index</div><div class="val" id="dxyPx">—</div><div class="sub" id="dxySrc">—</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Today's Trades</h2>
+        <div class="px">
+          <div class="box"><div class="lab">Executed</div><div class="val" id="stTrades">0</div></div>
+          <div class="box"><div class="lab">Win rate</div><div class="val" id="stWinrate">—</div></div>
+          <div class="box stat-win"><div class="lab">Wins</div><div class="val" id="stWins">0</div></div>
+          <div class="box stat-loss"><div class="lab">Losses</div><div class="val" id="stLosses">0</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Trade Settings</h2>
+        <div class="set">
+          <div><label>Daily loss limit ($)</label><input id="setLoss" type="number" min="0" step="10"></div>
+          <div><label>Daily profit target ($)</label><input id="setProfit" type="number" min="0" step="10"></div>
+          <div><label>Lot mode</label><select id="setLotMode"><option>AUTO</option><option>MANUAL</option></select></div>
+          <div><label>Manual lot</label><input id="setLot" type="number" min="0.01" step="0.01"></div>
+        </div>
+        <button id="saveBtn">Save settings</button>
+        <div class="pnl-line">
+          <span>day P/L <b id="dayPnl">0.00</b></span>
+          <span id="limitStatus">—</span>
         </div>
       </div>
     </div>
@@ -217,6 +288,12 @@ const corrChart = new Chart(document.getElementById('corrChart'), {
 });
 
 let autoOn = false;
+let settingsLoaded = false;
+
+function syncLotInput(){
+  document.getElementById('setLot').disabled =
+    document.getElementById('setLotMode').value !== 'MANUAL';
+}
 
 async function poll(){
   try{
@@ -226,10 +303,63 @@ async function poll(){
     document.getElementById('connDot').className = 'dot ' + (s.connected ? 'on' : 'off');
     document.getElementById('connTxt').textContent = s.connected ? 'MT5 connected' : 'disconnected';
     document.getElementById('sessTxt').textContent = s.in_session ? 'LDN/NY OPEN' : 'closed';
-    document.getElementById('tradesTxt').textContent = `${s.trades_today}/${s.max_trades}`;
+    document.getElementById('tradesTxt').textContent = s.trades_today;
+    const hp = document.getElementById('hdrPnl');
+    hp.textContent = (s.daily_pnl>=0?'+':'') + (s.daily_pnl??0).toFixed(2);
+    hp.style.color = (s.daily_pnl??0) >= 0 ? css('--buy') : css('--sell');
     if (s.account && s.account.equity !== undefined)
       document.getElementById('equityTxt').textContent = `${s.account.equity} ${s.account.currency||''}`;
     document.getElementById('updTxt').textContent = s.last_update || '—';
+
+    // scanner phase
+    const sc = document.getElementById('scanner');
+    document.getElementById('phaseTxt').textContent = s.phase || '—';
+    sc.className = 'scanner' + (s.connected ? '' : ' dead');
+
+    // halt banner
+    const hb = document.getElementById('haltbar');
+    if (s.halted){
+      hb.style.display = 'flex';
+      document.getElementById('haltTxt').textContent =
+        `⛔ BOT HALTED — ${s.consecutive_losses}/${s.max_consecutive_losses} consecutive losses. No trades until resumed.`;
+    } else hb.style.display = 'none';
+
+    // signal confirmation status
+    const ct = document.getElementById('confirmTag');
+    if (s.pending_signal){
+      ct.style.display = 'inline-block';
+      ct.textContent = `⏳ confirming ${s.pending_signal.dir} (${s.pending_signal.score}) on next candle…`;
+      ct.className = 'tag';
+    } else if (s.confirmed_signal){
+      ct.style.display = 'inline-block';
+      ct.textContent = `✅ signal confirmed: ${s.confirmed_signal}`;
+      ct.className = 'tag active';
+    } else ct.style.display = 'none';
+
+    // settings (fill once so typing isn't overwritten)
+    if (!settingsLoaded && s.daily_loss_limit !== undefined){
+      document.getElementById('setLoss').value = s.daily_loss_limit;
+      document.getElementById('setProfit').value = s.daily_profit_target;
+      document.getElementById('setLotMode').value = s.lot_mode;
+      document.getElementById('setLot').value = s.manual_lot;
+      syncLotInput();
+      settingsLoaded = true;
+    }
+    // today's trade stats
+    document.getElementById('stTrades').textContent = s.trades_today ?? 0;
+    document.getElementById('stWins').textContent = s.wins ?? 0;
+    document.getElementById('stLosses').textContent = s.losses ?? 0;
+    const totalClosed = (s.wins||0) + (s.losses||0);
+    document.getElementById('stWinrate').textContent =
+      totalClosed ? Math.round((s.wins||0)/totalClosed*100) + '%' : '—';
+
+    const dp = document.getElementById('dayPnl');
+    dp.textContent = (s.daily_pnl>=0?'+':'') + (s.daily_pnl??0).toFixed(2);
+    dp.className = (s.daily_pnl??0) >= 0 ? 'pos' : 'neg';
+    const ls = document.getElementById('limitStatus');
+    if (s.daily_limit_hit === 'loss') ls.textContent = '🛑 loss limit hit — no entries today';
+    else if (s.daily_limit_hit === 'profit') ls.textContent = '🎯 profit target hit — no entries today';
+    else ls.textContent = `limits: −$${s.daily_loss_limit||0} / +$${s.daily_profit_target||0}`;
 
     const err = document.getElementById('errbar');
     if (s.error){ err.style.display='block'; err.textContent = s.error; }
@@ -316,6 +446,24 @@ document.getElementById('autoBtn').onclick = async ()=>{
 document.getElementById('closeBtn').onclick = async ()=>{
   if (!confirm('Close all GDX-CORR positions?')) return;
   await fetch('/api/close_all',{method:'POST'}); poll();
+};
+document.getElementById('resumeBtn').onclick = async ()=>{
+  if (!confirm('Resume trading? The loss streak will be reset.')) return;
+  await fetch('/api/resume',{method:'POST'}); poll();
+};
+document.getElementById('setLotMode').onchange = syncLotInput;
+document.getElementById('saveBtn').onclick = async ()=>{
+  const btn = document.getElementById('saveBtn');
+  await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      daily_loss_limit: parseFloat(document.getElementById('setLoss').value)||0,
+      daily_profit_target: parseFloat(document.getElementById('setProfit').value)||0,
+      lot_mode: document.getElementById('setLotMode').value,
+      manual_lot: parseFloat(document.getElementById('setLot').value)||0.01,
+    })});
+  btn.textContent = 'Saved ✓';
+  setTimeout(()=>{ btn.textContent = 'Save settings'; }, 1500);
+  settingsLoaded = false; poll();
 };
 
 poll(); setInterval(poll, REFRESH);

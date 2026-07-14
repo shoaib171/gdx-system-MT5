@@ -14,15 +14,35 @@ from zoneinfo import ZoneInfo
 import config as cfg
 
 
-def in_session(now: datetime | None = None) -> bool:
+def _mins(hhmm: str) -> int:
+    h, m = map(int, hhmm.split(":"))
+    return h * 60 + m
+
+
+def _now_minutes(now: datetime | None = None) -> int:
     tz = ZoneInfo(cfg.SESSION_TZ)
     now = now or datetime.now(tz)
     if now.tzinfo is None:
         now = now.replace(tzinfo=tz)
-    start_h, start_m = map(int, cfg.SESSION_START.split(":"))
-    end_h, end_m = map(int, cfg.SESSION_END.split(":"))
-    minutes = now.hour * 60 + now.minute
-    return (start_h * 60 + start_m) <= minutes <= (end_h * 60 + end_m)
+    return now.hour * 60 + now.minute
+
+
+def in_session(now: datetime | None = None) -> bool:
+    """London/NY overlap — the +10 scoring component."""
+    m = _now_minutes(now)
+    return _mins(cfg.SESSION_START) <= m <= _mins(cfg.SESSION_END)
+
+
+def in_entry_window(now: datetime | None = None) -> bool:
+    """Entries allowed only 03:00–21:30 PKT; outside it the bot analyzes/signals only."""
+    m = _now_minutes(now)
+    return _mins(cfg.TRADING_DAY_START) <= m <= _mins(cfg.ENTRY_CUTOFF)
+
+
+def market_closed(now: datetime | None = None) -> bool:
+    """01:00–03:00 PKT — gold & DXY markets closed, engine idles."""
+    m = _now_minutes(now)
+    return _mins(cfg.MARKET_CLOSED_START) <= m < _mins(cfg.MARKET_CLOSED_END)
 
 
 def evaluate(snap: dict) -> dict:

@@ -20,11 +20,12 @@ env/
 ENV/
 
 # ==========================
-# IDE
+# IDE / local tooling
 # ==========================
 .vscode/
 .idea/
 *.swp
+.claude/
 
 # ==========================
 # Environment
@@ -53,6 +54,7 @@ logs/
 *.db
 *.sqlite3
 *.pid
+bot_state.json
 
 # ==========================
 # Build

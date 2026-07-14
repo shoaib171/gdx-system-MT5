@@ -39,16 +39,41 @@ Single-process pipeline, one module per stage, all configured from `config.py`
    bonus, and London/NY session filter (PKT times). Direction is *contrarian to DXY*:
    DXY falling → BUY gold. `fire` at score ≥ 70, `auto_eligible` at ≥ 75.
 3. **`trader.py`** (`Trader`) — MT5 order execution behind risk gates: max 1 open
-   position, 4 trades/day, 45-min cooldown after a loss, hard stop after 2 consecutive
-   losses. Lot size derived from equity risk % and ATR-based SL (TP = 2R). Orders retry
+   position, daily realized loss limit / profit target (after either is hit the engine
+   keeps analyzing but takes no entries until the next day), 45-min cooldown after a
+   loss, and a HALT after `MAX_CONSECUTIVE_LOSSES` (3) that survives day rollover and
+   clears only via `/api/resume`. Lot sizing has two modes (dashboard-switchable):
+   AUTO (equity risk % vs ATR-based SL, TP = 2R) or MANUAL (fixed lot). Orders retry
    once with FOK filling if IOC fails. Only touches positions with `MAGIC_NUMBER`
-   (77201) so manual trades are never affected.
+   (77201) so manual trades are never affected. `_log()` writes to the dashboard log;
+   Discord receives only calls marked `discord=True` (entries with SL/TP, SL/TP hits,
+   daily limits, halt/resume, bot start/stop) — never per-loop noise.
 4. **`app.py`** — Flask server plus a daemon `engine_loop` thread that every
    `REFRESH_SECONDS` fetches → evaluates → (optionally) executes, and publishes into a
    module-level `STATE` dict guarded by `LOCK`. `templates/dashboard.html` polls
-   `/api/state`. Auto-trade always starts OFF and is toggled via `/api/toggle_auto`;
-   `/api/close_all` is the kill switch. `last_executed_bar` in STATE prevents duplicate
-   entries on the same candle.
+   `/api/state`. The loop also publishes a `phase` string (live scanner on the
+   dashboard), logs signal changes locally with the reason (which component flipped),
+   and runs a next-candle confirmation state machine: a firing signal must still fire
+   on a NEW bar to be "confirmed" — only confirmations go to Discord, and a confirmed
+   signal opposite to the open position (score ≥ `OPPOSITE_EXIT_SCORE`) closes it
+   (`EXIT_ON_OPPOSITE`). Entries themselves are unchanged: immediate on
+   `auto_eligible`, once per bar via `last_executed_bar`. Auto-trade always starts OFF
+   (`/api/toggle_auto`); other APIs: `/api/close_all` (kill switch), `/api/resume`
+   (clear halt), `/api/settings` (runtime daily limits + lot mode).
+
+## Operating hours & diagnostics
+
+- All times PKT (`SESSION_TZ`). The trading day rolls at `TRADING_DAY_START` (03:00),
+  not midnight — `daily_logger.trading_day()` is the day key everywhere. Entries are
+  allowed 03:00–`ENTRY_CUTOFF` (21:30); until `MARKET_CLOSED_START` (01:00) the engine
+  analyzes and signals only; 01:00–03:00 it idles (gold/DXY closed).
+- **`daily_logger.py`** appends structured events (one JSON line each: `bar`, `log`,
+  `entry`, `close`, `signal_confirmed`, `error`) to `logs/<trading-day>.jsonl`.
+  `build_report()` aggregates a day into `logs/report_<day>.json`; the engine loop
+  builds it automatically at the 03:00 rollover and posts a Discord summary.
+  `/api/report?day=YYYY-MM-DD` serves it on demand.
+- `Trader` persists daily stats/settings/halt across restarts in `bot_state.json`
+  (gitignored, like `logs/`).
 
 ## Broker/symbol gotchas
 
