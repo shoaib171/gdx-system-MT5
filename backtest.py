@@ -184,10 +184,13 @@ def run(df, sim_start, balance0, filters_on, label):
                 spread_d = row["spread"] * 0.01
                 d = 1 if pending["dir"] == "BUY" else -1
                 entry = row["open"] + (spread_d if d > 0 else 0.0)
-                # SL beyond swing +/- ATR buffer, min $5 (TRADE_MANAGEMENT.md)
-                swing = (pending["swing_low"] - cfg.SL_ATR_BUFFER * pending["atr"]) if d > 0 \
-                    else (pending["swing_high"] + cfg.SL_ATR_BUFFER * pending["atr"])
-                sl_dist = max(d * (entry - swing), cfg.SL_MIN_ATR * pending["atr"])
+                # SL per SL_MODE (TRADE_MANAGEMENT.md)
+                if cfg.SL_MODE == "SWING":
+                    swing = (pending["swing_low"] - cfg.SL_ATR_BUFFER * pending["atr"]) if d > 0 \
+                        else (pending["swing_high"] + cfg.SL_ATR_BUFFER * pending["atr"])
+                    sl_dist = max(d * (entry - swing), cfg.SL_MIN_ATR * pending["atr"])
+                else:
+                    sl_dist = cfg.SL_ATR_MULT * pending["atr"]
                 raw = (balance * cfg.RISK_PERCENT / 100.0) / (sl_dist * POINT_VALUE)
                 lots = max(cfg.MIN_LOT, min(cfg.MAX_LOT, np.floor(raw / 0.01) * 0.01))
                 pos = {"dir": pending["dir"], "entry": entry, "lots": round(lots, 2),
@@ -303,8 +306,8 @@ if __name__ == "__main__":
     print(f"data: {df.index[0]} .. {df.index[-1]} (server time), {len(df)} bars, "
           f"simulating last {args.days} days, warmup ok: {warmup_ok}")
     print(f"daily limits: loss ${cfg.DAILY_LOSS_LIMIT:.0f} / target ${cfg.DAILY_PROFIT_TARGET:.0f}"
-          f" | risk {cfg.RISK_PERCENT}% | SL swing({cfg.SL_SWING_LOOKBACK})+{cfg.SL_ATR_BUFFER}xATR"
-          f" min {cfg.SL_MIN_ATR}xATR | TP1 {cfg.TP1_RR}R->BE+{cfg.BE_CUSHION_ATR}xATR"
+          f" | risk {cfg.RISK_PERCENT}% | SL mode {cfg.SL_MODE}"
+          f" | TP1 {cfg.TP1_RR}R->BE+{cfg.BE_CUSHION_ATR}xATR"
           f" | TP2 {cfg.TP2_RR}R | trail {cfg.TRAIL_ATR_MULT}xATR")
 
     run(df, sim_start, args.balance, filters_on=False,

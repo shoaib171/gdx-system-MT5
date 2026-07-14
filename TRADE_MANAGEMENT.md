@@ -9,9 +9,16 @@ ATR — nothing is a fixed dollar number.
 
 ## 1. Entry
 - Entry price: market (ask for BUY, bid for SELL) at the confirmed signal.
-- **SL**: beyond the swing low/high of the last `SL_SWING_LOOKBACK` (10) closed
-  candles, plus an ATR buffer (`SL_ATR_BUFFER` × ATR), or **minimum
-  `SL_MIN_ATR` × ATR** — whichever is FARTHER from entry.
+- **SL** (`SL_MODE`):
+  - `"ATR"` (default, backtest winner): `SL_ATR_MULT` (1.5) × ATR from entry.
+  - `"SWING"`: beyond the 10-candle swing low/high + `SL_ATR_BUFFER` × ATR,
+    minimum `SL_MIN_ATR` × ATR.
+  - **Why ATR is the default** — 30-day backtest ($50k, identical management):
+    ATR SL → 19 trades, 53% win, PF 1.26, **+$555**; swing SL → 11 trades,
+    36% win, PF 0.42, **−$811**. Wide swing stops inflate 1R so TP1/TP2 sit
+    too far away: winners get clipped at ~0.6R by the trail while losers pay
+    the full 1R. Tight stops bring TP1 close → breakeven protection engages
+    often (win rate 36% → 53%) and TP2 actually gets hit.
 - **TP1** = entry + 1 × risk (`TP1_RR`, **1:1**) — a virtual management level.
 - **TP2** = entry + 2 × risk (`TP2_RR`, **1:2**) — the real TP on the broker order.
 - Lot: AUTO = (balance × risk%) ÷ (SL distance × $100); MANUAL = fixed lot.

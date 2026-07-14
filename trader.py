@@ -418,16 +418,19 @@ class Trader:
         # (TRADE_MANAGEMENT.md #1); order TP is TP2, TP1 is a management level
         if direction == "BUY":
             price = tick.ask
-            swing_sl = snap["swing_low"] - cfg.SL_ATR_BUFFER * atr
-            sl_dist = max(price - swing_sl, cfg.SL_MIN_ATR * atr)
-            sl, tp = price - sl_dist, price + sl_dist * cfg.TP2_RR
             order_type = mt5.ORDER_TYPE_BUY
         else:
             price = tick.bid
-            swing_sl = snap["swing_high"] + cfg.SL_ATR_BUFFER * atr
-            sl_dist = max(swing_sl - price, cfg.SL_MIN_ATR * atr)
-            sl, tp = price + sl_dist, price - sl_dist * cfg.TP2_RR
             order_type = mt5.ORDER_TYPE_SELL
+        d = 1 if direction == "BUY" else -1
+        if cfg.SL_MODE == "SWING":
+            swing = (snap["swing_low"] - cfg.SL_ATR_BUFFER * atr) if d > 0 \
+                else (snap["swing_high"] + cfg.SL_ATR_BUFFER * atr)
+            sl_dist = max(d * (price - swing), cfg.SL_MIN_ATR * atr)
+        else:   # ATR mode — backtest winner (see TRADE_MANAGEMENT.md)
+            sl_dist = cfg.SL_ATR_MULT * atr
+        sl = price - d * sl_dist
+        tp = price + d * sl_dist * cfg.TP2_RR
 
         lots = self._lot_size(sl_dist)
         request = {
