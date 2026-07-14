@@ -313,7 +313,8 @@ class Trader:
         # adopt/reconstruct after restart or manual trade with our magic
         if not self.active or self.active.get("ticket") != p["ticket"]:
             d = 1 if p["type"] == "BUY" else -1
-            risk = abs(p["tp"] - p["open_price"]) / cfg.TP2_RR if p["tp"] else cfg.SL_MIN_DOLLARS
+            risk = abs(p["tp"] - p["open_price"]) / cfg.TP2_RR if p["tp"] \
+                else cfg.SL_MIN_ATR * snap["atr"]
             self.active = {"ticket": p["ticket"], "dir": p["type"], "entry": p["open_price"],
                            "risk": risk, "tp1": p["open_price"] + d * risk * cfg.TP1_RR,
                            "tp2": p["tp"], "tp1_done": False}
@@ -338,15 +339,17 @@ class Trader:
             return
 
         if not a["tp1_done"]:
-            # TP1 touched -> SL to breakeven + cushion (full lot stays on)
+            # TP1 touched -> SL to breakeven + dynamic ATR cushion (full lot stays on)
             if d * (price - a["tp1"]) >= 0:
-                new_sl = a["entry"] + d * cfg.BE_CUSHION
+                cushion = round(cfg.BE_CUSHION_ATR * snap["atr"], 2)
+                new_sl = a["entry"] + d * cushion
                 if self._modify_sl(p["ticket"], new_sl, p["tp"],
                                    retries=cfg.SL_MODIFY_RETRIES):
                     a["tp1_done"] = True
+                    a["cushion"] = cushion
                     self._save_state()
-                    self._log(f"🎯 TP1 {a['tp1']:.2f} reached — SL moved to breakeven"
-                              f"{'+' if d > 0 else '-'}${cfg.BE_CUSHION:.0f} ({new_sl:.2f}). "
+                    self._log(f"🎯 TP1 {a['tp1']:.2f} (1:1) reached — SL moved to breakeven"
+                              f"{'+' if d > 0 else '-'}${cushion:.2f} ({new_sl:.2f}). "
                               f"Position is now RISK-FREE, trailing towards TP2 {a['tp2']:.2f}",
                               "good", discord=True)
                 else:
@@ -359,7 +362,7 @@ class Trader:
             # trailing: gap = TRAIL_ATR_MULT x current ATR, forward only,
             # never behind the breakeven cushion
             desired = price - d * cfg.TRAIL_ATR_MULT * snap["atr"]
-            floor_sl = a["entry"] + d * cfg.BE_CUSHION
+            floor_sl = a["entry"] + d * a.get("cushion", cfg.BE_CUSHION_ATR * snap["atr"])
             if d * (desired - floor_sl) < 0:
                 desired = floor_sl
             cur_sl = p["sl"] or floor_sl
@@ -416,13 +419,13 @@ class Trader:
         if direction == "BUY":
             price = tick.ask
             swing_sl = snap["swing_low"] - cfg.SL_ATR_BUFFER * atr
-            sl_dist = max(price - swing_sl, cfg.SL_MIN_DOLLARS)
+            sl_dist = max(price - swing_sl, cfg.SL_MIN_ATR * atr)
             sl, tp = price - sl_dist, price + sl_dist * cfg.TP2_RR
             order_type = mt5.ORDER_TYPE_BUY
         else:
             price = tick.bid
             swing_sl = snap["swing_high"] + cfg.SL_ATR_BUFFER * atr
-            sl_dist = max(swing_sl - price, cfg.SL_MIN_DOLLARS)
+            sl_dist = max(swing_sl - price, cfg.SL_MIN_ATR * atr)
             sl, tp = price + sl_dist, price - sl_dist * cfg.TP2_RR
             order_type = mt5.ORDER_TYPE_SELL
 

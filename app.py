@@ -194,7 +194,7 @@ def engine_loop():
                 px = snap["gold_ask"] if fire_dir == "BUY" else snap["gold_price"]
                 swing = (snap["swing_low"] - cfg.SL_ATR_BUFFER * snap["atr"]) if d > 0 \
                     else (snap["swing_high"] + cfg.SL_ATR_BUFFER * snap["atr"])
-                sl_dist = max(d * (px - swing), cfg.SL_MIN_DOLLARS)
+                sl_dist = max(d * (px - swing), cfg.SL_MIN_ATR * snap["atr"])
                 sl = px - d * sl_dist
                 tp1 = px + d * sl_dist * cfg.TP1_RR
                 tp2 = px + d * sl_dist * cfg.TP2_RR

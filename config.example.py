@@ -73,12 +73,13 @@ MAX_LOT = 0.50
 MAX_OPEN_POSITIONS = 1
 
 # ============ TRADE MANAGEMENT (see TRADE_MANAGEMENT.md) ============
+# fully market-driven: every distance derives from swing structure or ATR
 SL_SWING_LOOKBACK = 10     # closed candles scanned for the swing low/high
 SL_ATR_BUFFER = 0.5        # x ATR beyond the swing point
-SL_MIN_DOLLARS = 5.0       # SL never closer than this to entry
-TP1_RR = 2.0               # management level: SL -> breakeven+cushion here
-TP2_RR = 3.0               # actual TP on the broker order
-BE_CUSHION = 3.0           # $ beyond entry once TP1 is touched
+SL_MIN_ATR = 1.0           # SL never closer than this x ATR to entry
+TP1_RR = 1.0               # 1:1 — management level: SL -> breakeven+cushion here
+TP2_RR = 2.0               # 1:2 — actual TP on the broker order
+BE_CUSHION_ATR = 0.3       # x ATR beyond entry once TP1 is touched
 TRAIL_ATR_MULT = 1.5       # trailing gap after TP1 (x current ATR)
 TRAIL_MIN_STEP = 0.5       # $ improvement needed before modifying SL again
 SL_MODIFY_RETRIES = 4      # broker SL-move attempts before safety close
