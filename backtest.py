@@ -71,6 +71,9 @@ def build_dataset(bars):
     lc = (df["low"] - df["gold"].shift()).abs()
     df["atr"] = pd.concat([hl, hc, lc], axis=1).max(axis=1).rolling(cfg.ATR_PERIOD).mean()
     df["range"] = hl
+    # swing levels from CLOSED bars before each candle (TRADE_MANAGEMENT.md)
+    df["swing_low"] = df["low"].rolling(cfg.SL_SWING_LOOKBACK).min().shift(1)
+    df["swing_high"] = df["high"].rolling(cfg.SL_SWING_LOOKBACK).max().shift(1)
     return df
 
 
@@ -179,29 +182,50 @@ def run(df, sim_start, balance0, filters_on, label):
                 blocked["hours"] += 1
             else:
                 spread_d = row["spread"] * 0.01
-                entry = row["open"] + (spread_d if pending["dir"] == "BUY" else 0.0)
-                sl_dist = cfg.SL_ATR_MULT * pending["atr"]
+                d = 1 if pending["dir"] == "BUY" else -1
+                entry = row["open"] + (spread_d if d > 0 else 0.0)
+                # SL beyond swing +/- ATR buffer, min $5 (TRADE_MANAGEMENT.md)
+                swing = (pending["swing_low"] - cfg.SL_ATR_BUFFER * pending["atr"]) if d > 0 \
+                    else (pending["swing_high"] + cfg.SL_ATR_BUFFER * pending["atr"])
+                sl_dist = max(d * (entry - swing), cfg.SL_MIN_DOLLARS)
                 raw = (balance * cfg.RISK_PERCENT / 100.0) / (sl_dist * POINT_VALUE)
                 lots = max(cfg.MIN_LOT, min(cfg.MAX_LOT, np.floor(raw / 0.01) * 0.01))
-                d = 1 if pending["dir"] == "BUY" else -1
                 pos = {"dir": pending["dir"], "entry": entry, "lots": round(lots, 2),
-                       "sl": entry - d * sl_dist, "tp": entry + d * sl_dist * cfg.TP_RR,
+                       "sl": entry - d * sl_dist,
+                       "tp1": entry + d * sl_dist * cfg.TP1_RR,
+                       "tp2": entry + d * sl_dist * cfg.TP2_RR,
+                       "tp1_done": False,
                        "entry_time": t_open, "score": pending["score"],
                        "spread_cost": spread_d * POINT_VALUE * lots}
         pending = None
 
-        # --- manage open position within this bar ---
+        # --- manage open position within this bar (TRADE_MANAGEMENT.md) ---
         if pos is not None and idx[i] >= pos["entry_time"]:
-            if pos["dir"] == "BUY":
-                if row["low"] <= pos["sl"]:
+            d = 1 if pos["dir"] == "BUY" else -1
+            favor = row["high"] if d > 0 else row["low"]
+            adverse = row["low"] if d > 0 else row["high"]
+            if not pos["tp1_done"]:
+                if d * (adverse - pos["sl"]) <= 0:
                     close_pos(pos["sl"], t_open, "sl"); pos = None
-                elif row["high"] >= pos["tp"]:
-                    close_pos(pos["tp"], t_open, "tp"); pos = None
+                elif d * (favor - pos["tp1"]) >= 0:
+                    # TP1 touched: SL -> breakeven + cushion, full lot stays on
+                    pos["tp1_done"] = True
+                    pos["sl"] = pos["entry"] + d * cfg.BE_CUSHION
+                    if d * (favor - pos["tp2"]) >= 0:
+                        close_pos(pos["tp2"], t_open, "tp2"); pos = None
+                    else:
+                        trail = row["gold"] - d * cfg.TRAIL_ATR_MULT * row["atr"]
+                        if d * (trail - pos["sl"]) > 0:
+                            pos["sl"] = trail
             else:
-                if row["high"] >= pos["sl"]:
-                    close_pos(pos["sl"], t_open, "sl"); pos = None
-                elif row["low"] <= pos["tp"]:
-                    close_pos(pos["tp"], t_open, "tp"); pos = None
+                if d * (adverse - pos["sl"]) <= 0:
+                    close_pos(pos["sl"], t_open, "trail"); pos = None
+                elif d * (favor - pos["tp2"]) >= 0:
+                    close_pos(pos["tp2"], t_open, "tp2"); pos = None
+                else:
+                    trail = row["gold"] - d * cfg.TRAIL_ATR_MULT * row["atr"]
+                    if d * (trail - pos["sl"]) > 0:
+                        pos["sl"] = trail
 
         # --- signal at bar close ---
         sig = score_bar(df, i, pkt_close, use_regime_stability=filters_on)
@@ -230,7 +254,8 @@ def run(df, sim_start, balance0, filters_on, label):
                     > cfg.MAX_EXTENSION_ATR * row["atr"]:
                 blocked["overext"] += 1
             else:
-                pending = {"dir": fire, "score": sig["score"], "atr": row["atr"]}
+                pending = {"dir": fire, "score": sig["score"], "atr": row["atr"],
+                           "swing_low": row["swing_low"], "swing_high": row["swing_high"]}
 
     if pos is not None:
         close_pos(df["gold"].iloc[-1], idx[-1], "eod")
@@ -278,7 +303,9 @@ if __name__ == "__main__":
     print(f"data: {df.index[0]} .. {df.index[-1]} (server time), {len(df)} bars, "
           f"simulating last {args.days} days, warmup ok: {warmup_ok}")
     print(f"daily limits: loss ${cfg.DAILY_LOSS_LIMIT:.0f} / target ${cfg.DAILY_PROFIT_TARGET:.0f}"
-          f" | risk {cfg.RISK_PERCENT}% | SL {cfg.SL_ATR_MULT}xATR TP {cfg.TP_RR}R")
+          f" | risk {cfg.RISK_PERCENT}% | SL swing({cfg.SL_SWING_LOOKBACK})+{cfg.SL_ATR_BUFFER}xATR"
+          f" min ${cfg.SL_MIN_DOLLARS:.0f} | TP1 {cfg.TP1_RR}R->BE+${cfg.BE_CUSHION:.0f}"
+          f" | TP2 {cfg.TP2_RR}R | trail {cfg.TRAIL_ATR_MULT}xATR")
 
     run(df, sim_start, args.balance, filters_on=False,
         label="OLD SYSTEM — no confirmation, no quality filters")

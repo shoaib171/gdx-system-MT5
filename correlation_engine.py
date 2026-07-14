@@ -138,6 +138,13 @@ class CorrelationEngine:
         # widest of the forming candle and the last closed candle
         bar_range = float((gold["high"] - gold["low"]).tail(2).max())
 
+        # ---- swing levels for SL placement (TRADE_MANAGEMENT.md) ----
+        # last N CLOSED candles (forming candle excluded)
+        lb = cfg.SL_SWING_LOOKBACK
+        closed_gold = gold.iloc[-(lb + 1):-1] if len(gold) > lb else gold
+        swing_low = float(closed_gold["low"].min())
+        swing_high = float(closed_gold["high"].max())
+
         tick = mt5.symbol_info_tick(cfg.GOLD_SYMBOL)
         snapshot = {
             "gold_price": float(tick.bid) if tick else float(last["gold"]),
@@ -148,6 +155,8 @@ class CorrelationEngine:
             "regime_ok": regime_ok,
             "regime_corr": regime_corr,
             "bar_range": bar_range,
+            "swing_low": swing_low,
+            "swing_high": swing_high,
             "corr_z": float(last["corr_z"]) if not np.isnan(last["corr_z"]) else 0.0,
             "dxy_ema_fast": float(last["dxy_ema_f"]),
             "dxy_ema_slow": float(last["dxy_ema_s"]),

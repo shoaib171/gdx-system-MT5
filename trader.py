@@ -44,6 +44,10 @@ class Trader:
         # daily win/loss stats
         self.wins = 0
         self.losses = 0
+        # active-trade management state (TRADE_MANAGEMENT.md):
+        # {"ticket","dir","entry","risk","tp1","tp2","tp1_done"}
+        self.active: dict | None = None
+        self._last_trail_log = 0.0
         self._load_state()   # restore stats/settings/halt from previous run
 
     # ---------- persistence ----------
@@ -63,6 +67,7 @@ class Trader:
             "lot_mode": self.lot_mode,
             "manual_lot": self.manual_lot,
             "known_tickets": sorted(self._known_position_tickets),
+            "active_trade": self.active,
         }
         try:
             with open(STATE_FILE, "w") as f:
@@ -85,6 +90,7 @@ class Trader:
         self.manual_lot = float(d.get("manual_lot", self.manual_lot))
         # remembered tickets let us detect positions that closed while the bot was off
         self._known_position_tickets = set(d.get("known_tickets", []))
+        self.active = d.get("active_trade")
         if d.get("day") == dlog.trading_day().isoformat():
             self.trades_today = int(d.get("trades_today", 0))
             self.wins = int(d.get("wins", 0))
@@ -169,16 +175,33 @@ class Trader:
             # range makes the MT5 API ignore it and return ALL account deals,
             # which mis-reported every close as the 2-day account total.
             deals = mt5.history_deals_get(position=ticket) or []
-            pnl = sum(d.profit for d in deals if d.entry == mt5.DEAL_ENTRY_OUT)
+            out_deals = [d for d in deals if d.entry == mt5.DEAL_ENTRY_OUT]
+            pnl = sum(d.profit for d in out_deals)
+            exit_px = out_deals[-1].price if out_deals else 0.0
             self.daily_pnl = round(self.daily_pnl + pnl, 2)
+
+            # exit classification (TRADE_MANAGEMENT.md #4) — by total P/L and
+            # the broker's real exit price, never assumed
+            a = self.active if (self.active and self.active.get("ticket") == ticket) else None
+            if pnl < 0:
+                how = "sl_hit"
+            elif a and a.get("tp2") and abs(exit_px - a["tp2"]) <= 0.5:
+                how = "tp2_full"
+            elif a and a.get("tp1_done"):
+                how = "dynamic_tp2"
+            else:
+                how = "profit_close"
             dlog.log_event("close", ticket=ticket, pnl=round(pnl, 2),
-                           result="loss" if pnl < 0 else "win",
-                           how="sl_hit" if pnl < 0 else "tp_hit")
+                           exit=round(exit_px, 2),
+                           result="loss" if pnl < 0 else "win", how=how)
+            if a:
+                self.active = None
+
             if pnl < 0:
                 self.losses += 1
                 self.consecutive_losses += 1
                 self.cooldown_until = datetime.now() + timedelta(minutes=cfg.COOLDOWN_AFTER_LOSS_MIN)
-                self._log(f"🔴 SL hit — position {ticket} closed at LOSS {pnl:.2f}. "
+                self._log(f"🔻 SL hit @ {exit_px:.2f} — position {ticket} closed at LOSS {pnl:.2f}. "
                           f"Cooldown {cfg.COOLDOWN_AFTER_LOSS_MIN}m. "
                           f"Streak {self.consecutive_losses}/{cfg.MAX_CONSECUTIVE_LOSSES}",
                           "warn", discord=True)
@@ -190,8 +213,14 @@ class Trader:
             else:
                 self.wins += 1
                 self.consecutive_losses = 0
-                self._log(f"🟢 TP hit — position {ticket} closed at PROFIT +{pnl:.2f}",
-                          "good", discord=True)
+                if how == "tp2_full":
+                    msg = f"🏆 TP2 FULL @ {exit_px:.2f} — position {ticket} closed at PROFIT +{pnl:.2f}"
+                elif how == "dynamic_tp2":
+                    msg = (f"🎯 Dynamic TP2 @ {exit_px:.2f} (trailing lock) — "
+                           f"position {ticket} closed at PROFIT +{pnl:.2f}")
+                else:
+                    msg = f"🟢 Position {ticket} closed at PROFIT +{pnl:.2f} @ {exit_px:.2f}"
+                self._log(msg, "good", discord=True)
             self._check_daily_limits()
         self._known_position_tickets = current
         if closed:
@@ -256,6 +285,91 @@ class Trader:
         lots = max(cfg.MIN_LOT, min(cfg.MAX_LOT, round(lots / step) * step))
         return round(lots, 2)
 
+    # ---------- trade management (TRADE_MANAGEMENT.md) ----------
+    def _modify_sl(self, ticket: int, sl: float, tp: float, retries: int = 1) -> bool:
+        sym = mt5.symbol_info(cfg.GOLD_SYMBOL)
+        digits = sym.digits if sym else 2
+        request = {"action": mt5.TRADE_ACTION_SLTP, "symbol": cfg.GOLD_SYMBOL,
+                   "position": ticket, "sl": round(sl, digits),
+                   "tp": round(tp, digits) if tp else 0.0}
+        for attempt in range(retries):
+            res = mt5.order_send(request)
+            if res and res.retcode == mt5.TRADE_RETCODE_DONE:
+                return True
+            if attempt < retries - 1:
+                time.sleep(cfg.SL_MODIFY_RETRY_WAIT)
+        return False
+
+    def manage_position(self, snap: dict):
+        """TP1 -> breakeven+cushion; then ATR trailing; watchdog if SL ignored."""
+        positions = self.open_positions()
+        if not positions:
+            if self.active is not None:
+                self.active = None
+                self._save_state()
+            return
+        p = positions[0]
+
+        # adopt/reconstruct after restart or manual trade with our magic
+        if not self.active or self.active.get("ticket") != p["ticket"]:
+            d = 1 if p["type"] == "BUY" else -1
+            risk = abs(p["tp"] - p["open_price"]) / cfg.TP2_RR if p["tp"] else cfg.SL_MIN_DOLLARS
+            self.active = {"ticket": p["ticket"], "dir": p["type"], "entry": p["open_price"],
+                           "risk": risk, "tp1": p["open_price"] + d * risk * cfg.TP1_RR,
+                           "tp2": p["tp"], "tp1_done": False}
+            self._save_state()
+            self._log(f"Managing position #{p['ticket']} — TP1 {self.active['tp1']:.2f}, "
+                      f"TP2 {p['tp']:.2f}")
+
+        a = self.active
+        d = 1 if a["dir"] == "BUY" else -1
+        tick = mt5.symbol_info_tick(cfg.GOLD_SYMBOL)
+        if not tick:
+            return
+        price = tick.bid if a["dir"] == "BUY" else tick.ask
+
+        # watchdog: price is beyond SL but the broker hasn't closed the position
+        if p["sl"] and d * (price - p["sl"]) < -0.10:
+            self._log(f"⛔ WATCHDOG — price {price:.2f} beyond SL {p['sl']:.2f} and position "
+                      f"still open; force-closing at market", "error", discord=True)
+            self.close_all(reason="watchdog — SL not honored")
+            self.active = None
+            self._save_state()
+            return
+
+        if not a["tp1_done"]:
+            # TP1 touched -> SL to breakeven + cushion (full lot stays on)
+            if d * (price - a["tp1"]) >= 0:
+                new_sl = a["entry"] + d * cfg.BE_CUSHION
+                if self._modify_sl(p["ticket"], new_sl, p["tp"],
+                                   retries=cfg.SL_MODIFY_RETRIES):
+                    a["tp1_done"] = True
+                    self._save_state()
+                    self._log(f"🎯 TP1 {a['tp1']:.2f} reached — SL moved to breakeven"
+                              f"{'+' if d > 0 else '-'}${cfg.BE_CUSHION:.0f} ({new_sl:.2f}). "
+                              f"Position is now RISK-FREE, trailing towards TP2 {a['tp2']:.2f}",
+                              "good", discord=True)
+                else:
+                    self._log(f"⛔ SL move after TP1 FAILED {cfg.SL_MODIFY_RETRIES}x — "
+                              f"safety-closing full lot", "error", discord=True)
+                    self.close_all(reason="TP1 SL-move failed — safety close")
+                    self.active = None
+                    self._save_state()
+        else:
+            # trailing: gap = TRAIL_ATR_MULT x current ATR, forward only,
+            # never behind the breakeven cushion
+            desired = price - d * cfg.TRAIL_ATR_MULT * snap["atr"]
+            floor_sl = a["entry"] + d * cfg.BE_CUSHION
+            if d * (desired - floor_sl) < 0:
+                desired = floor_sl
+            cur_sl = p["sl"] or floor_sl
+            if d * (desired - cur_sl) >= cfg.TRAIL_MIN_STEP:
+                if self._modify_sl(p["ticket"], desired, p["tp"]):
+                    if abs(desired - self._last_trail_log) >= 1.0:
+                        self._log(f"Trailing SL → {desired:.2f} "
+                                  f"(gap {cfg.TRAIL_ATR_MULT}x ATR = {cfg.TRAIL_ATR_MULT * snap['atr']:.2f})")
+                        self._last_trail_log = desired
+
     # ---------- entry quality gates (STRATEGY_FILTERS.md) ----------
     def _quality_gates(self, direction: str, snap: dict) -> tuple[bool, str]:
         atr = snap["atr"]
@@ -297,15 +411,19 @@ class Trader:
             self._log("No tick/symbol info — order skipped", "error")
             return False
 
-        sl_dist = cfg.SL_ATR_MULT * atr
-        tp_dist = sl_dist * cfg.TP_RR
+        # SL beyond the swing point + ATR buffer, never closer than SL_MIN_DOLLARS
+        # (TRADE_MANAGEMENT.md #1); order TP is TP2, TP1 is a management level
         if direction == "BUY":
             price = tick.ask
-            sl, tp = price - sl_dist, price + tp_dist
+            swing_sl = snap["swing_low"] - cfg.SL_ATR_BUFFER * atr
+            sl_dist = max(price - swing_sl, cfg.SL_MIN_DOLLARS)
+            sl, tp = price - sl_dist, price + sl_dist * cfg.TP2_RR
             order_type = mt5.ORDER_TYPE_BUY
         else:
             price = tick.bid
-            sl, tp = price + sl_dist, price - tp_dist
+            swing_sl = snap["swing_high"] + cfg.SL_ATR_BUFFER * atr
+            sl_dist = max(swing_sl - price, cfg.SL_MIN_DOLLARS)
+            sl, tp = price + sl_dist, price - sl_dist * cfg.TP2_RR
             order_type = mt5.ORDER_TYPE_SELL
 
         lots = self._lot_size(sl_dist)
@@ -335,13 +453,18 @@ class Trader:
 
         self.trades_today += 1
         self._known_position_tickets.add(result.order)
+        d = 1 if direction == "BUY" else -1
+        tp1 = price + d * sl_dist * cfg.TP1_RR
+        self.active = {"ticket": result.order, "dir": direction, "entry": price,
+                       "risk": sl_dist, "tp1": tp1, "tp2": round(tp, sym.digits),
+                       "tp1_done": False}
         self._save_state()
         dlog.log_event("entry", ticket=result.order, direction=direction, lots=lots,
-                       price=round(price, 2), sl=round(sl, 2), tp=round(tp, 2),
-                       score=score, lot_mode=self.lot_mode)
+                       price=round(price, 2), sl=round(sl, 2), tp1=round(tp1, 2),
+                       tp2=round(tp, 2), score=score, lot_mode=self.lot_mode)
         self._log(f"{'🟩' if direction == 'BUY' else '🟥'} ENTRY {direction} {lots} lots @ {price:.2f} "
-                  f"| SL {sl:.2f} | TP {tp:.2f} | score {score} | lot mode {self.lot_mode}",
-                  "good", discord=True)
+                  f"| SL {sl:.2f} | TP1 {tp1:.2f} | TP2 {tp:.2f} | score {score} "
+                  f"| lot mode {self.lot_mode}", "good", discord=True)
         return True
 
     def close_all(self, reason: str = "manual close"):
@@ -367,6 +490,8 @@ class Trader:
                 # count P/L now and forget the ticket so check_closed_trades
                 # doesn't re-report this close as an SL/TP hit
                 self._known_position_tickets.discard(p["ticket"])
+                if self.active and self.active.get("ticket") == p["ticket"]:
+                    self.active = None
                 self.daily_pnl = round(self.daily_pnl + p["profit"], 2)
                 if p["profit"] < 0:
                     self.losses += 1

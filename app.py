@@ -141,6 +141,7 @@ def engine_loop():
 
             set_phase("checking positions & risk gates")
             trader.check_closed_trades()
+            trader.manage_position(snap)   # TP1 breakeven / trailing / watchdog
 
             # ---- one structured diagnostics event per candle ----
             bar = snap["bar_time"]
@@ -187,21 +188,25 @@ def engine_loop():
                 pending = None
                 fired_this_bar = True
                 expiry_bar = bar
-                # suggested trade levels — makes the signal actionable manually,
-                # especially outside entry hours when the bot won't enter itself
+                # suggested trade levels (TRADE_MANAGEMENT.md) — makes the signal
+                # actionable manually, especially outside entry hours
+                d = 1 if fire_dir == "BUY" else -1
                 px = snap["gold_ask"] if fire_dir == "BUY" else snap["gold_price"]
-                sl_dist = cfg.SL_ATR_MULT * snap["atr"]
-                tp_dist = sl_dist * cfg.TP_RR
-                sl = px - sl_dist if fire_dir == "BUY" else px + sl_dist
-                tp = px + tp_dist if fire_dir == "BUY" else px - tp_dist
+                swing = (snap["swing_low"] - cfg.SL_ATR_BUFFER * snap["atr"]) if d > 0 \
+                    else (snap["swing_high"] + cfg.SL_ATR_BUFFER * snap["atr"])
+                sl_dist = max(d * (px - swing), cfg.SL_MIN_DOLLARS)
+                sl = px - d * sl_dist
+                tp1 = px + d * sl_dist * cfg.TP1_RR
+                tp2 = px + d * sl_dist * cfg.TP2_RR
                 suffix = ("" if in_entry_window()
                           else " | ⚠️ outside entry hours — bot will NOT enter, manual levels")
                 log_event("signal_confirmed", direction=fire_dir, score=sig["score"],
                           corr=round(snap["correlation"], 3), bar=bar,
-                          entry=round(px, 2), sl=round(sl, 2), tp=round(tp, 2))
+                          entry=round(px, 2), sl=round(sl, 2),
+                          tp1=round(tp1, 2), tp2=round(tp2, 2))
                 trader._log(f"✅ SIGNAL CONFIRMED {fire_dir} — score {sig['score']}, "
                             f"corr {snap['correlation']:+.2f} | entry ~{px:.2f} | "
-                            f"SL {sl:.2f} | TP {tp:.2f}{suffix}",
+                            f"SL {sl:.2f} | TP1 {tp1:.2f} | TP2 {tp2:.2f}{suffix}",
                             "good", discord=True)
                 # opposite-signal exit: confirmed signal against the open position
                 if cfg.EXIT_ON_OPPOSITE and sig["score"] >= cfg.OPPOSITE_EXIT_SCORE:

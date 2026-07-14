@@ -70,9 +70,19 @@ LOT_MODE = "AUTO"          # "AUTO" = risk%-based sizing | "MANUAL" = fixed MANU
 MANUAL_LOT = 0.10          # used when LOT_MODE = "MANUAL" (changeable from dashboard)
 MIN_LOT = 0.01
 MAX_LOT = 0.50
-SL_ATR_MULT = 1.5          # stop loss = 1.5 x ATR
-TP_RR = 2.0                # take profit = 2R
 MAX_OPEN_POSITIONS = 1
+
+# ============ TRADE MANAGEMENT (see TRADE_MANAGEMENT.md) ============
+SL_SWING_LOOKBACK = 10     # closed candles scanned for the swing low/high
+SL_ATR_BUFFER = 0.5        # x ATR beyond the swing point
+SL_MIN_DOLLARS = 5.0       # SL never closer than this to entry
+TP1_RR = 2.0               # management level: SL -> breakeven+cushion here
+TP2_RR = 3.0               # actual TP on the broker order
+BE_CUSHION = 3.0           # $ beyond entry once TP1 is touched
+TRAIL_ATR_MULT = 1.5       # trailing gap after TP1 (x current ATR)
+TRAIL_MIN_STEP = 0.5       # $ improvement needed before modifying SL again
+SL_MODIFY_RETRIES = 4      # broker SL-move attempts before safety close
+SL_MODIFY_RETRY_WAIT = 0.5 # seconds between attempts
 DAILY_LOSS_LIMIT = 500.0   # USD realized loss for the day -> analysis only, no new entries (0 = off)
 DAILY_PROFIT_TARGET = 1000.0  # USD realized profit for the day -> analysis only, no new entries (0 = off)
 COOLDOWN_AFTER_LOSS_MIN = 45   # minutes paused after a losing trade
