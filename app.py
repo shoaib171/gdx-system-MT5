@@ -218,10 +218,8 @@ def engine_loop():
                         trader.close_all(reason=f"confirmed opposite {fire_dir} "
                                                 f"(score {sig['score']})")
 
-            # ---- auto-trade (once per bar; confirmed signals only if configured) ----
-            entry_confirmed = (not cfg.ENTRY_REQUIRES_CONFIRMATION
-                               or confirmed_dir == sig["raw_direction"])
-            if (STATE["auto_trade"] and sig["auto_eligible"] and entry_confirmed
+            # ---- auto-trade (once per bar) ----
+            if (STATE["auto_trade"] and sig["auto_eligible"]
                     and bar != STATE["last_executed_bar"]):
                 set_phase(f"executing {sig['raw_direction']} — score {sig['score']}")
                 executed = trader.execute(sig["raw_direction"], snap, sig["score"])

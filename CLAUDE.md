@@ -61,17 +61,17 @@ Single-process pipeline, one module per stage, all configured from `config.py`
    (`/api/toggle_auto`); other APIs: `/api/close_all` (kill switch), `/api/resume`
    (clear halt), `/api/settings` (runtime daily limits + lot mode).
 
-## Entry quality filters
+## Trade management
 
-`STRATEGY_FILTERS.md` documents the 2026-07-14 case study behind these — read it
-before changing any of them. All are execution gates (scoring untouched), each
-with a config switch: entries require next-candle confirmation
-(`ENTRY_REQUIRES_CONFIRMATION`), are skipped during spike candles
-(`SPIKE_BAR_ATR_RATIO` × ATR) or when price is overextended from EMA21
-(`MAX_EXTENSION_ATR`), and the regime is computed from closed bars only
-(`REGIME_CLOSED_BARS_ONLY`, `REGIME_MIN_BARS`) so a forming spike candle cannot
-flip it. Gate checks live in `Trader._quality_gates`; the snapshot carries
-`regime_ok` / `regime_corr` / `bar_range` for them.
+`TRADE_MANAGEMENT.md` is the owner's design — read it before touching
+`Trader.plan_trade` / `Trader.manage_position`. SL from ATR or swing structure
+(`SL_MODE`), targets from S/R zones or R-multiples (`TP_MODE`), TP1 touch moves
+SL to breakeven + ATR cushion, then ATR trailing toward TP2. Entries are
+immediate once `auto_eligible` (score ≥ 75), once per bar; the next-candle
+confirmation state machine exists only for Discord signal alerts and the
+opposite-signal exit. Do NOT add entry filters (spike/overextension/regime
+stability/entry confirmation) — they were implemented and removed on the
+owner's instruction (2026-07-16).
 
 ## Operating hours & diagnostics
 

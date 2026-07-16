@@ -406,33 +406,10 @@ class Trader:
                                   f"(gap {cfg.TRAIL_ATR_MULT}x ATR = {cfg.TRAIL_ATR_MULT * snap['atr']:.2f})")
                         self._last_trail_log = desired
 
-    # ---------- entry quality gates (STRATEGY_FILTERS.md) ----------
-    def _quality_gates(self, direction: str, snap: dict) -> tuple[bool, str]:
-        atr = snap["atr"]
-        if atr <= 0:
-            return True, "OK"
-        # spike filter — current/last candle abnormally large vs ATR
-        if cfg.SPIKE_BAR_ATR_RATIO > 0:
-            ratio = snap.get("bar_range", 0.0) / atr
-            if ratio > cfg.SPIKE_BAR_ATR_RATIO:
-                return False, (f"Spike candle (range {ratio:.1f}x ATR) — "
-                               f"waiting for market to settle")
-        # overextension filter — don't buy tops / sell bottoms
-        if cfg.MAX_EXTENSION_ATR > 0:
-            price = snap["gold_ask"] if direction == "BUY" else snap["gold_price"]
-            ema = snap["gold_ema_slow"]
-            ext = (price - ema) if direction == "BUY" else (ema - price)
-            if ext > cfg.MAX_EXTENSION_ATR * atr:
-                return False, (f"Overextended ({ext / atr:.1f}x ATR from EMA21) — "
-                               f"waiting for pullback")
-        return True, "OK"
-
     # ---------- execution ----------
     def execute(self, direction: str, snap: dict, score: float) -> bool:
         atr = snap["atr"]
         ok, reason = self.can_trade()
-        if ok:
-            ok, reason = self._quality_gates(direction, snap)
         if not ok:
             # log locally only once per (direction, reason) — no Discord, no repeat spam
             if self._last_block != (direction, reason):

@@ -151,21 +151,6 @@ class CorrelationEngine:
         df = df.dropna(subset=["corr"])
         last = df.iloc[-1]
 
-        # ---- regime stability (STRATEGY_FILTERS.md #4) ----
-        # regime correlation from CLOSED candles only, held for N consecutive bars,
-        # so one forming spike candle can't flip the regime in seconds
-        corr_series = df["corr"]
-        closed = corr_series.iloc[:-1] if (cfg.REGIME_CLOSED_BARS_ONLY and len(corr_series) > 1) \
-            else corr_series
-        n = max(1, int(cfg.REGIME_MIN_BARS))
-        tail = closed.tail(n)
-        regime_ok = bool(len(tail) == n and (tail <= cfg.CORR_REGIME_THRESHOLD).all())
-        regime_corr = float(closed.iloc[-1]) if len(closed) else float(last["corr"])
-
-        # ---- spike detection (STRATEGY_FILTERS.md #2) ----
-        # widest of the forming candle and the last closed candle
-        bar_range = float((gold["high"] - gold["low"]).tail(2).max())
-
         # ---- swing levels for SL placement (TRADE_MANAGEMENT.md) ----
         # last N CLOSED candles (forming candle excluded)
         lb = cfg.SL_SWING_LOOKBACK
@@ -185,9 +170,6 @@ class CorrelationEngine:
             "dxy_value": float(last["dxy"]),
             "dxy_source": self.dxy_symbol or "SYNTHETIC (6-pair basket)",
             "correlation": float(last["corr"]),
-            "regime_ok": regime_ok,
-            "regime_corr": regime_corr,
-            "bar_range": bar_range,
             "swing_low": swing_low,
             "swing_high": swing_high,
             "levels": levels,

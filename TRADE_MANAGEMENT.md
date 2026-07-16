@@ -14,7 +14,7 @@ and reacted to before, and only once price proves the trade (reaches TP1) does
 the stop start moving with ATR.
 
 ## 1. Entry
-- Entry price: market (ask for BUY, bid for SELL) at the confirmed signal.
+- Entry price: market (ask for BUY, bid for SELL) when the signal scores ≥ 75.
 - **TP1** (`TP_MODE = "STRUCTURE"`): the nearest S/R zone in the trade's
   direction — fractal swing points over the last `SR_LOOKBACK` (120) closed
   candles, clustered within `SR_CLUSTER_ATR` × ATR. If no zone pays at least

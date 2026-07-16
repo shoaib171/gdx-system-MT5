@@ -103,14 +103,12 @@ def structure_zones(df, i, atr):
     return zones
 
 
-def score_bar(df, i, pkt_close, use_regime_stability):
+def score_bar(df, i, pkt_close):
     """Same scoring model as signal_engine.evaluate, on bar-close data."""
     w = cfg.SCORE_WEIGHTS
     row = df.iloc[i]
 
-    n = max(1, int(cfg.REGIME_MIN_BARS)) if use_regime_stability else 1
-    corr_tail = df["corr"].iloc[i - n + 1: i + 1]
-    regime = bool((corr_tail <= cfg.CORR_REGIME_THRESHOLD).all())
+    regime = bool(row["corr"] <= cfg.CORR_REGIME_THRESHOLD)
     regime_corr = row["corr"]
     if regime:
         depth = min(1.0, (abs(regime_corr) - abs(cfg.CORR_REGIME_THRESHOLD)) /
@@ -144,7 +142,7 @@ def score_bar(df, i, pkt_close, use_regime_stability):
     return {"direction": direction, "score": score, "fire": fire}
 
 
-def run(df, sim_start, balance0, filters_on, label):
+def run(df, sim_start, balance0, label):
     balance = balance0
     peak = balance0
     max_dd = 0.0
@@ -152,8 +150,7 @@ def run(df, sim_start, balance0, filters_on, label):
     pending = None            # entry decided at bar close, executed next bar open
     prev_fire = None          # (direction) fired at previous bar close
     trades = []
-    blocked = {"spike": 0, "overext": 0, "hours": 0, "cooldown": 0, "halt": 0,
-               "limit": 0, "no_target": 0}
+    blocked = {"hours": 0, "cooldown": 0, "halt": 0, "limit": 0, "no_target": 0}
     cooldown_until = None
     streak = 0
     halted = False
@@ -254,9 +251,11 @@ def run(df, sim_start, balance0, filters_on, label):
                         pos["sl"] = trail
 
         # --- signal at bar close ---
-        sig = score_bar(df, i, pkt_close, use_regime_stability=filters_on)
+        sig = score_bar(df, i, pkt_close)
         fire = sig["direction"] if sig["fire"] else None
-        confirmed = fire is not None and prev_fire == fire if filters_on else fire is not None
+        # confirmation is used ONLY for the opposite-signal exit (as live):
+        # the same firing direction on two consecutive closed bars
+        confirmed = fire is not None and prev_fire == fire
         prev_fire = fire
 
         # opposite-signal exit (confirmed opposite, score >= threshold)
@@ -264,21 +263,14 @@ def run(df, sim_start, balance0, filters_on, label):
                 and fire != pos["dir"] and sig["score"] >= cfg.OPPOSITE_EXIT_SCORE):
             close_pos(row["gold"], t_open, "opposite"); pos = None
 
-        # --- entry decision ---
-        if pos is None and confirmed and fire and sig["score"] >= cfg.AUTO_TRADE_THRESHOLD:
+        # --- entry decision (immediate, as live) ---
+        if pos is None and fire and sig["score"] >= cfg.AUTO_TRADE_THRESHOLD:
             if halted:
                 blocked["halt"] += 1
             elif limit_hit:
                 blocked["limit"] += 1
             elif cooldown_until is not None and t_open + BAR < cooldown_until:
                 blocked["cooldown"] += 1
-            elif filters_on and cfg.SPIKE_BAR_ATR_RATIO > 0 and row["atr"] > 0 and \
-                    max(row["range"], df["range"].iloc[i - 1]) > cfg.SPIKE_BAR_ATR_RATIO * row["atr"]:
-                blocked["spike"] += 1
-            elif filters_on and cfg.MAX_EXTENSION_ATR > 0 and row["atr"] > 0 and \
-                    ((row["gold"] - row["g_es"]) if fire == "BUY" else (row["g_es"] - row["gold"])) \
-                    > cfg.MAX_EXTENSION_ATR * row["atr"]:
-                blocked["overext"] += 1
             else:
                 pending = {"dir": fire, "score": sig["score"],
                            "snap": {"atr": row["atr"],
@@ -335,7 +327,4 @@ if __name__ == "__main__":
           f" | risk {cfg.RISK_PERCENT}% | SL {cfg.SL_MODE} | TP {cfg.TP_MODE}"
           f" | BE+{cfg.BE_CUSHION_ATR}xATR at TP1 | trail {cfg.TRAIL_ATR_MULT}xATR")
 
-    run(df, sim_start, args.balance, filters_on=False,
-        label="OLD SYSTEM — no confirmation, no quality filters")
-    run(df, sim_start, args.balance, filters_on=True,
-        label="NEW SYSTEM — confirmation + spike + overextension + regime stability")
+    run(df, sim_start, args.balance, label="GDX-CORR — current live rules")
