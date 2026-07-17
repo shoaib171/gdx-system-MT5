@@ -84,6 +84,10 @@ class CorrelationEngine:
             self.last_error = f"No rates for {symbol}: {mt5.last_error()}"
             return None
         df = pd.DataFrame(rates)
+        if df.empty or "close" not in df.columns:
+            # terminal disconnected / broker feed down can return malformed rates
+            self.last_error = f"Bad rates for {symbol} — terminal disconnected or feed down"
+            return None
         df["time"] = pd.to_datetime(df["time"], unit="s")
         return df.set_index("time")
 
